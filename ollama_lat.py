@@ -133,13 +133,17 @@ def traduzir_stream(texto: str,
             timeout=(15, None),  # 15 s para conectar; sem limite de leitura (streaming)
         )
         resp.raise_for_status()
+        concluido = False
         for line in resp.iter_lines():
             if line:
                 chunk = json.loads(line)
                 if chunk.get("response"):
                     yield chunk["response"]
                 if chunk.get("done"):
+                    concluido = True
                     break
+        if not concluido:
+            yield "\n\n⚠ [Tradução interrompida — stream fechado sem sinal de conclusão.\nPossível causa: memória insuficiente. Tente um texto mais curto.]"
     except requests.exceptions.ConnectionError:
         yield "\n[Ollama não está a correr — execute: ollama serve]"
     except Exception as e:
