@@ -107,7 +107,25 @@ def traduzir_stream(texto: str,
     }
 
     _MAX_RETRIES = 4
-    _RETRY_DELAYS = [5, 15, 30]  # segundos de espera antes de cada retry
+
+    def _parse_429(body: dict) -> tuple[int, bool]:
+        """Devolve (segundos_a_esperar, é_limite_diário)."""
+        err = body.get("error", {})
+        details = err.get("details", [])
+        diario = any(
+            "PerDay" in v.get("quotaId", "")
+            for d in details if d.get("@type", "").endswith("QuotaFailure")
+            for v in d.get("violations", [])
+        )
+        espera = 30  # fallback
+        for d in details:
+            if d.get("@type", "").endswith("RetryInfo"):
+                raw = d.get("retryDelay", "")
+                try:
+                    espera = int(raw.rstrip("s")) + 2
+                except ValueError:
+                    pass
+        return espera, diario
 
     for tentativa in range(_MAX_RETRIES):
         try:
@@ -121,8 +139,15 @@ def traduzir_stream(texto: str,
                         yield f"[Erro Gemini: {err.get('message', resp.text[:100])}]"
                     return
                 if resp.status_code == 429:
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = {}
+                    espera, diario = _parse_429(body)
+                    if diario:
+                        yield "[Quota diária Gemini esgotada. Tente novamente amanhã.]"
+                        return
                     if tentativa < _MAX_RETRIES - 1:
-                        espera = _RETRY_DELAYS[tentativa]
                         # \x01retry: é interpretado pelo GeminiThread como mensagem de estado
                         yield f"\x01retry:Limite de taxa Gemini. A tentar novamente em {espera}s… ({tentativa+1}/{_MAX_RETRIES-1})"
                         for _ in range(espera):
