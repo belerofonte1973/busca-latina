@@ -19,6 +19,14 @@ from typing import Iterator
 
 OLLAMA_URL = "http://localhost:11434"
 
+# Contexto limitado a 2048 tokens: suficiente para tradução de trechos curtos
+# e reduz o KV-cache de ~1,5 GB (padrão 131 072) para ~24 MB.
+NUM_CTX = 2048
+
+# O modelo é descarregado da RAM após este período de inatividade.
+# Libera ~2 GB quando a app não está a ser usada.
+KEEP_ALIVE = "5m"
+
 # Modelos recomendados para tradução de latim/grego (do mais leve ao melhor)
 MODELOS_RECOMENDADOS = [
     ("phi3",       "Phi-3 Mini 3.8B  — rápido, leve"),
@@ -100,7 +108,8 @@ def precarregar_modelo(modelo: str | None = None) -> tuple[bool, str]:
     try:
         r = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": modelo, "keep_alive": -1},
+            json={"model": modelo, "keep_alive": KEEP_ALIVE,
+                  "options": {"num_ctx": NUM_CTX}},
             timeout=(15, 300),   # até 5 min para carregar o modelo
         )
         return r.status_code == 200, modelo
@@ -128,7 +137,9 @@ def traduzir_stream(texto: str,
     try:
         resp = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": modelo, "prompt": prompt, "stream": True},
+            json={"model": modelo, "prompt": prompt, "stream": True,
+                  "keep_alive": KEEP_ALIVE,
+                  "options": {"num_ctx": NUM_CTX}},
             stream=True,
             timeout=(15, None),  # 15 s para conectar; sem limite de leitura (streaming)
         )
