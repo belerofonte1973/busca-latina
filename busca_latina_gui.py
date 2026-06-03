@@ -42,15 +42,6 @@ except ImportError:
     _PRONUNCIA_OK = False
 
 try:
-    from claude_lat import (traduzir_stream as claude_stream, guardar_chave,
-                            obter_chave, MODELOS_CLAUDE, MODELO_DEFAULT)
-    _CLAUDE_OK = True
-except ImportError:
-    MODELOS_CLAUDE = []
-    MODELO_DEFAULT = "claude-opus-4-8"
-    _CLAUDE_OK = False
-
-try:
     from gemini_lat import (traduzir_stream as gemini_stream,
                              guardar_chave as gemini_guardar_chave,
                              obter_chave as gemini_obter_chave,
@@ -268,38 +259,6 @@ class WhitakerThread(QThread):
             self.erro.emit(str(e))
 
 
-class ClaudeThread(QThread):
-    """Tradução via API Claude com streaming."""
-    chunk  = pyqtSignal(str)
-    done   = pyqtSignal()
-    erro   = pyqtSignal(str)
-
-    def __init__(self, texto, lingua, modelo, api_key):
-        super().__init__()
-        self.texto   = texto
-        self.lingua  = lingua
-        self.modelo  = modelo
-        self.api_key = api_key
-        self._stop   = False
-
-    def stop(self):
-        self._stop = True
-
-    def run(self):
-        if not _CLAUDE_OK:
-            self.erro.emit("claude_lat.py não encontrado")
-            return
-        try:
-            for frag in claude_stream(self.texto, self.lingua,
-                                      self.modelo, self.api_key):
-                if self._stop:
-                    break
-                self.chunk.emit(frag)
-            self.done.emit()
-        except Exception as e:
-            self.erro.emit(str(e))
-
-
 class PrecarregarThread(QThread):
     """Carrega o modelo Ollama em memória em background ao iniciar a app."""
     pronto = pyqtSignal(str)   # emite o nome do modelo quando carregado
@@ -403,7 +362,6 @@ class BuscaLatina(QMainWindow):
         self.trans_thread         = None
         self.pron_thread          = None
         self._ollama_thread       = None
-        self._claude_thread       = None
         self._gemini_thread       = None
         self._whitaker_thread     = None
         self._precarregar_thread  = None
@@ -579,34 +537,6 @@ class BuscaLatina(QMainWindow):
         self.btn_parar_ia.setToolTip("Interrompe a geração de texto")
         self.btn_parar_ia.clicked.connect(self._on_parar_ia)
         ctrl_ia.addWidget(self.btn_parar_ia)
-
-        ctrl_ia.addWidget(self._sep())
-
-        # ── Claude API ─────────────────────────────────────────────────────────
-        self.btn_claude = QPushButton("✨ Claude →PT")
-        self.btn_claude.setToolTip(
-            "Traduz com a API Claude (Anthropic)\n"
-            "Requer chave API em ANTHROPIC_API_KEY ou nas definições"
-        )
-        self.btn_claude.clicked.connect(self._on_claude_traduzir)
-        ctrl_ia.addWidget(self.btn_claude)
-
-        self.combo_claude_modelo = QComboBox()
-        self.combo_claude_modelo.setMinimumWidth(160)
-        for mid, rotulo in MODELOS_CLAUDE:
-            self.combo_claude_modelo.addItem(rotulo, mid)
-        # Selecciona Sonnet por omissão
-        for i in range(self.combo_claude_modelo.count()):
-            if "sonnet" in self.combo_claude_modelo.itemData(i).lower():
-                self.combo_claude_modelo.setCurrentIndex(i)
-                break
-        ctrl_ia.addWidget(self.combo_claude_modelo)
-
-        self.btn_claude_chave = QPushButton("🔑")
-        self.btn_claude_chave.setFixedWidth(30)
-        self.btn_claude_chave.setToolTip("Configurar chave API Claude")
-        self.btn_claude_chave.clicked.connect(self._on_configurar_chave_claude)
-        ctrl_ia.addWidget(self.btn_claude_chave)
 
         ctrl_ia.addWidget(self._sep())
 
@@ -1023,61 +953,6 @@ class BuscaLatina(QMainWindow):
         self._whitaker_thread.start()
         self.status_bar.showMessage("Whitaker's Words a analisar…")
 
-    # ── Claude API ────────────────────────────────────────────────────────────
-
-    def _on_configurar_chave_claude(self):
-        """Diálogo para inserir/actualizar a chave API Claude."""
-        chave_actual = (obter_chave() if _CLAUDE_OK else "") or ""
-        placeholder  = chave_actual[:8] + "…" if chave_actual else "(não definida)"
-        texto, ok = QInputDialog.getText(
-            self,
-            "Chave API Claude (Anthropic)",
-            f"Chave actual: {placeholder}\n\nInsira a nova chave (ou cancele para manter):",
-            QLineEdit.Password,
-        )
-        if ok and texto.strip():
-            if _CLAUDE_OK:
-                guardar_chave(texto.strip())
-            self.status_bar.showMessage("✓ Chave API Claude guardada.")
-
-    def _on_claude_traduzir(self):
-        if not _CLAUDE_OK:
-            self.trans_out.setPlainText("⚠ claude_lat.py não encontrado.")
-            return
-        chave = obter_chave()
-        if not chave:
-            QMessageBox.warning(
-                self, "Chave API em falta",
-                "Configure a chave API Claude clicando no botão 🔑 ao lado.",
-            )
-            return
-        texto = self._texto_selecionado()
-        if not texto.strip():
-            self.trans_out.setPlainText(
-                "⚠ Nenhum texto seleccionado.\n"
-                "Seleccione texto no painel de resultados e clique novamente."
-            )
-            return
-
-        modelo = self.combo_claude_modelo.currentData() or MODELO_DEFAULT
-        lingua = self._lingua_ollama()   # reutiliza o selector Latim/Grego
-
-        if self._claude_thread is not None and self._claude_thread.isRunning():
-            self._claude_thread.stop()
-            self._claude_thread.wait(1000)
-
-        self.trans_out.setPlainText(f"✨ Claude ({modelo})…\n\n")
-        self._claude_thread = ClaudeThread(texto, lingua, modelo, chave)
-        self._claude_thread.chunk.connect(self._on_ollama_chunk)  # mesmo handler
-        self._claude_thread.done.connect(
-            lambda: self.status_bar.showMessage("✓ Tradução Claude concluída.")
-        )
-        self._claude_thread.erro.connect(
-            lambda e: self.trans_out.setPlainText(f"⚠ Erro Claude: {e}")
-        )
-        self._claude_thread.start()
-        self.status_bar.showMessage(f"Claude a traduzir…")
-
     # ── Ollama ────────────────────────────────────────────────────────────────
 
     def _atualizar_modelos_ollama(self):
@@ -1338,9 +1213,6 @@ class BuscaLatina(QMainWindow):
                     self._on_ollama_traduzir)
                 menu.addAction("📖 Comentário (Ollama)").triggered.connect(
                     self._on_ollama_comentario)
-            if _CLAUDE_OK:
-                menu.addAction("✨ Traduzir →PT (Claude)").triggered.connect(
-                    self._on_claude_traduzir)
             if _GEMINI_OK:
                 menu.addAction("🌟 Traduzir →PT (Gemini)").triggered.connect(
                     self._on_gemini_traduzir)
