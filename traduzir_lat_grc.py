@@ -7,16 +7,21 @@ Fontes:
   • Google Translate (gratuito, requer internet) — latim → PT, grego → PT
   • Lewis & Short (offline) — latim → inglês → PT
   • LSJ — Liddell-Scott-Jones (offline) — grego → inglês → PT
+  • Collatinus lemmes.pt (offline) — latim → português (~9900 entradas)
+  • Wikcionário Português (offline, requer download) — latim → português
 """
 
 import re
+import sqlite3
 import unicodedata
 import requests
 from pathlib import Path
 
-LS_XML  = Path("/usr/local/diogenes/dependencies/data/lat.ls.perseus-eng1.xml")
-LSJ_XML = Path("/usr/local/diogenes/dependencies/data/grc.lsj.xml")
-GTRANS  = "https://translate.googleapis.com/translate_a/single"
+LS_XML          = Path("/usr/local/diogenes/dependencies/data/lat.ls.perseus-eng1.xml")
+LSJ_XML         = Path("/usr/local/diogenes/dependencies/data/grc.lsj.xml")
+COLLATINUS_PT   = Path("/usr/share/collatinus/data/lemmes.pt")
+WIKT_PT_DB      = Path.home() / ".cache" / "busca_latina" / "wiktionary_pt.db"
+GTRANS          = "https://translate.googleapis.com/translate_a/single"
 
 _ls_bytes  = None   # cache do L&S em bytes
 _lsj_bytes = None   # cache do LSJ em bytes
@@ -165,6 +170,72 @@ def lookup_lsj(palavra: str, traduzir_pt: bool = True) -> str:
             f"── Tradução para PT ────────────────────────\n{pt}"
         )
     return entrada
+
+
+# ── Collatinus lemmes.pt (Latim → Português, offline) ────────────────────────
+
+_collatinus_pt: dict[str, str] | None = None
+
+def _load_collatinus_pt() -> dict[str, str]:
+    global _collatinus_pt
+    if _collatinus_pt is not None:
+        return _collatinus_pt
+    d: dict[str, str] = {}
+    try:
+        with open(COLLATINUS_PT, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("!") and ":" in line:
+                    word, _, defn = line.partition(":")
+                    w = word.strip().lower()
+                    if w:
+                        d[w] = defn.strip()
+    except OSError:
+        pass
+    _collatinus_pt = d
+    return d
+
+
+def lookup_collatinus_pt(palavra: str) -> str:
+    """Consulta o dicionário Collatinus (latim → português, offline)."""
+    d = _load_collatinus_pt()
+    if not d:
+        return "[Collatinus não instalado — execute: sudo apt install collatinus]"
+    key = palavra.strip().lower()
+    defn = d.get(key)
+    if defn:
+        return f"── Collatinus Lat→PT ────────────────────────\n{palavra}:  {defn}"
+    # tenta sem o último caractere (formas flexionadas simples)
+    if len(key) > 3:
+        for k, v in d.items():
+            if k.startswith(key[:4]):
+                return (
+                    f"── Collatinus Lat→PT (forma próxima: {k}) ──\n{k}:  {v}"
+                )
+    return f'"{palavra}" não encontrado no Collatinus (PT).'
+
+
+# ── Wikcionário Português (Latim → Português, offline após download) ──────────
+
+def lookup_wikt_pt(palavra: str) -> str:
+    """Consulta o Wikcionário Português (latim → português, offline)."""
+    if not WIKT_PT_DB.exists():
+        return (
+            "[Base de dados do Wikcionário PT não encontrada.\n"
+            "Execute primeiro:  python3 ~/baixar_dicionario_pt.py]"
+        )
+    try:
+        conn = sqlite3.connect(f"file:{WIKT_PT_DB}?mode=ro", uri=True)
+        row = conn.execute(
+            "SELECT definicao FROM entradas WHERE palavra = ? COLLATE NOCASE",
+            (palavra.strip(),),
+        ).fetchone()
+        conn.close()
+        if row:
+            return f"── Wikcionário PT ──────────────────────────\n{palavra}:  {row[0]}"
+        return f'"{palavra}" não encontrado no Wikcionário PT.'
+    except Exception as e:
+        return f"[Erro ao consultar Wikcionário PT: {e}]"
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

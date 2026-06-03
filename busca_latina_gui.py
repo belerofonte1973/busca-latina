@@ -21,9 +21,12 @@ from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QPalette
 # módulo de tradução e dicionário
 sys.path.insert(0, str(Path.home()))
 try:
-    from traduzir_lat_grc import traduzir_para_pt, lookup_ls, lookup_lsj
+    from traduzir_lat_grc import (traduzir_para_pt, lookup_ls, lookup_lsj,
+                                   lookup_collatinus_pt, lookup_wikt_pt,
+                                   WIKT_PT_DB)
     _TRADUCAO_OK = True
 except ImportError:
+    WIKT_PT_DB   = None
     _TRADUCAO_OK = False
 
 try:
@@ -343,10 +346,13 @@ class TranslateThread(QThread):
             return
         try:
             if self.modo == "ls":
-                # só definição inglesa — sem Google Translate
                 self.done.emit(lookup_ls(self.texto.strip(), traduzir_pt=False))
             elif self.modo == "lsj":
                 self.done.emit(lookup_lsj(self.texto.strip(), traduzir_pt=False))
+            elif self.modo == "collatinus_pt":
+                self.done.emit(lookup_collatinus_pt(self.texto.strip()))
+            elif self.modo == "wikt_pt":
+                self.done.emit(lookup_wikt_pt(self.texto.strip()))
             else:
                 self.done.emit("[modo desativado]")
         except Exception as e:
@@ -589,6 +595,21 @@ class BuscaLatina(QMainWindow):
         self.btn_lsj.setToolTip("Liddell-Scott-Jones — grego → inglês (offline)")
         self.btn_lsj.clicked.connect(lambda: self._on_dicionario("lsj"))
         ctrl_ia.addWidget(self.btn_lsj)
+
+        self.btn_collatinus_pt = QPushButton("Coll.PT")
+        self.btn_collatinus_pt.setToolTip(
+            "Collatinus — latim → português (offline, ~9900 entradas)"
+        )
+        self.btn_collatinus_pt.clicked.connect(lambda: self._on_dicionario("collatinus_pt"))
+        ctrl_ia.addWidget(self.btn_collatinus_pt)
+
+        self.btn_wikt_pt = QPushButton("Wikt.PT")
+        self.btn_wikt_pt.setToolTip(
+            "Wikcionário Português — latim → português (offline)\n"
+            "Requer download prévio: python3 ~/baixar_dicionario_pt.py"
+        )
+        self.btn_wikt_pt.clicked.connect(lambda: self._on_dicionario("wikt_pt"))
+        ctrl_ia.addWidget(self.btn_wikt_pt)
 
         self.btn_limpar_tr = QPushButton("Limpar")
         self.btn_limpar_tr.setFixedWidth(60)
@@ -1221,6 +1242,10 @@ class BuscaLatina(QMainWindow):
                 lambda: self._on_dicionario("ls"))
             menu.addAction("LSJ (Liddell-Scott-Jones)").triggered.connect(
                 lambda: self._on_dicionario("lsj"))
+            menu.addAction("Coll.PT (Collatinus latim→PT)").triggered.connect(
+                lambda: self._on_dicionario("collatinus_pt"))
+            menu.addAction("Wikt.PT (Wikcionário latim→PT)").triggered.connect(
+                lambda: self._on_dicionario("wikt_pt"))
         menu.exec_(event.globalPos())
 
     def _on_parar_ia(self):
