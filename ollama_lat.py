@@ -19,13 +19,6 @@ from typing import Iterator
 
 OLLAMA_URL = "http://localhost:11434"
 
-# Contexto limitado a 2048 tokens: suficiente para tradução de trechos curtos
-# e reduz o KV-cache de ~1,5 GB (padrão 131 072) para ~24 MB.
-NUM_CTX = 2048
-
-# O modelo é descarregado da RAM após este período de inatividade.
-# Libera ~2 GB quando a app não está a ser usada.
-KEEP_ALIVE = "5m"
 
 # Modelos recomendados para tradução de latim/grego (do mais leve ao melhor)
 MODELOS_RECOMENDADOS = [
@@ -38,23 +31,30 @@ MODELOS_RECOMENDADOS = [
 
 PROMPTS = {
     "la": (
-        "És um especialista em latim clássico e língua portuguesa. "
-        "Traduz o seguinte texto do latim para o português do Brasil, "
+        "És um especialista em latim clássico e língua portuguesa europeia. "
+        "Traduz o seguinte texto do latim para português de Portugal, "
         "de forma fluente e fiel ao original. "
-        "Fornece apenas a tradução, sem comentários ou explicações.\n\n"
+        "Regras obrigatórias: "
+        "(1) usa apenas palavras que existem em português; "
+        "(2) mantém concordância gramatical rigorosa em género e número; "
+        "(3) fornece apenas a tradução, sem comentários, notas ou explicações.\n\n"
         "Texto latino:\n{texto}\n\nTradução:"
     ),
     "grc": (
-        "És um especialista em grego antigo (clássico e helenístico) e língua portuguesa. "
-        "Traduz o seguinte texto do grego antigo para o português do Brasil, "
+        "És um especialista em grego antigo (clássico e helenístico) e língua portuguesa europeia. "
+        "Traduz o seguinte texto do grego antigo para português de Portugal, "
         "de forma fluente e fiel ao original. "
-        "Fornece apenas a tradução, sem transliteração nem comentários.\n\n"
+        "Regras obrigatórias: "
+        "(1) usa apenas palavras que existem em português; "
+        "(2) mantém concordância gramatical rigorosa em género e número; "
+        "(3) fornece apenas a tradução, sem transliteração nem comentários.\n\n"
         "Texto grego:\n{texto}\n\nTradução:"
     ),
     "comentario": (
         "És um professor de latim clássico. "
         "Faz um comentário filológico breve (3-5 frases) do seguinte trecho latino, "
-        "em português, cobrindo: estrutura gramatical, vocabulário notável e contexto literário.\n\n"
+        "em português de Portugal, cobrindo: estrutura gramatical, vocabulário notável e contexto literário. "
+        "Usa apenas palavras que existem em português; não uses termos inventados.\n\n"
         "Trecho:\n{texto}\n\nComentário:"
     ),
 }
@@ -108,8 +108,7 @@ def precarregar_modelo(modelo: str | None = None) -> tuple[bool, str]:
     try:
         r = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": modelo, "keep_alive": KEEP_ALIVE,
-                  "options": {"num_ctx": NUM_CTX}},
+            json={"model": modelo, "keep_alive": -1},
             timeout=(15, 300),   # até 5 min para carregar o modelo
         )
         return r.status_code == 200, modelo
@@ -137,9 +136,7 @@ def traduzir_stream(texto: str,
     try:
         resp = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": modelo, "prompt": prompt, "stream": True,
-                  "keep_alive": KEEP_ALIVE,
-                  "options": {"num_ctx": NUM_CTX}},
+            json={"model": modelo, "prompt": prompt, "stream": True},
             stream=True,
             timeout=(15, None),  # 15 s para conectar; sem limite de leitura (streaming)
         )
