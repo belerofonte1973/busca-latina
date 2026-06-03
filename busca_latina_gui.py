@@ -1355,11 +1355,13 @@ class BuscaLatina(QMainWindow):
 
     def _salvar_settings(self, *_):
         SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        s = {
-            "voz":        self._voz_selecionada(),
-            "variante":   self.bg_pron.checkedId(),
-            "velocidade": self.slider_vel.value(),
-        }
+        try:
+            s = json.loads(SETTINGS_FILE.read_text())
+        except Exception:
+            s = {}
+        s["voz"]        = self._voz_selecionada()
+        s["variante"]   = self.bg_pron.checkedId()
+        s["velocidade"] = self.slider_vel.value()
         SETTINGS_FILE.write_text(json.dumps(s, indent=2))
 
     def _agenda_salvar_settings(self):
