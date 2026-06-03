@@ -25,11 +25,10 @@ from typing import Iterator
 SETTINGS_FILE = Path.home() / ".config" / "busca_latina" / "settings.json"
 
 MODELOS_GEMINI = [
-    ("gemini-2.0-flash",       "Flash 2.0  — rápido, gratuito"),
     ("gemini-2.5-flash",       "Flash 2.5  — melhor qualidade, gratuito"),
     ("gemini-2.5-pro",         "Pro 2.5    — máxima qualidade (limite baixo)"),
 ]
-MODELO_DEFAULT = "gemini-2.0-flash"
+MODELO_DEFAULT = "gemini-2.5-flash"
 
 _BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
