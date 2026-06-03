@@ -757,6 +757,9 @@ class BuscaLatina(QMainWindow):
         # duplo-clique no texto de resultados → dicionário automático
         self.text.mouseDoubleClickEvent = self._on_text_dblclick
 
+        # menu de contexto (botão direito) com opções de tradução
+        self.text.contextMenuEvent = self._on_text_context_menu
+
         # ── barra de status ───────────────────────────────────────────────────
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -1323,6 +1326,30 @@ class BuscaLatina(QMainWindow):
             return
         modo = "lsj" if self.combo_lingua.currentIndex() == 1 else "ls"
         self._rodar_traducao(palavra, modo)
+
+    def _on_text_context_menu(self, event):
+        """Menu de contexto com opções de tradução para o texto seleccionado."""
+        menu = self.text.createStandardContextMenu()
+        sel = self.text.textCursor().selectedText().strip()
+        if sel:
+            menu.addSeparator()
+            if _OLLAMA_OK:
+                menu.addAction("🤖 Traduzir →PT (Ollama)").triggered.connect(
+                    self._on_ollama_traduzir)
+                menu.addAction("📖 Comentário (Ollama)").triggered.connect(
+                    self._on_ollama_comentario)
+            if _CLAUDE_OK:
+                menu.addAction("✨ Traduzir →PT (Claude)").triggered.connect(
+                    self._on_claude_traduzir)
+            if _GEMINI_OK:
+                menu.addAction("🌟 Traduzir →PT (Gemini)").triggered.connect(
+                    self._on_gemini_traduzir)
+            menu.addSeparator()
+            menu.addAction("L&S (Lewis & Short)").triggered.connect(
+                lambda: self._on_dicionario("ls"))
+            menu.addAction("LSJ (Liddell-Scott-Jones)").triggered.connect(
+                lambda: self._on_dicionario("lsj"))
+        menu.exec_(event.globalPos())
 
     def _on_parar_ia(self):
         if hasattr(self, '_ollama_thread') and self._ollama_thread.isRunning():
