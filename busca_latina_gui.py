@@ -595,9 +595,9 @@ class BuscaLatina(QMainWindow):
         self.combo_claude_modelo.setMinimumWidth(160)
         for mid, rotulo in MODELOS_CLAUDE:
             self.combo_claude_modelo.addItem(rotulo, mid)
-        # Selecciona Haiku por omissão (mais rápido e económico para uso frequente)
+        # Selecciona Sonnet por omissão
         for i in range(self.combo_claude_modelo.count()):
-            if "haiku" in self.combo_claude_modelo.itemData(i).lower():
+            if "sonnet" in self.combo_claude_modelo.itemData(i).lower():
                 self.combo_claude_modelo.setCurrentIndex(i)
                 break
         ctrl_ia.addWidget(self.combo_claude_modelo)

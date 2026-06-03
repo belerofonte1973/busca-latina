@@ -27,11 +27,10 @@ SETTINGS_FILE = Path.home() / ".config" / "busca_latina" / "settings.json"
 
 # Modelos disponíveis (do mais rápido/barato ao mais capaz)
 MODELOS_CLAUDE = [
-    ("claude-haiku-4-5",   "Haiku 4.5  — rápido, económico"),
     ("claude-sonnet-4-6",  "Sonnet 4.6 — equilíbrio"),
     ("claude-opus-4-8",    "Opus 4.8   — máxima qualidade"),
 ]
-MODELO_DEFAULT = "claude-opus-4-8"
+MODELO_DEFAULT = "claude-sonnet-4-6"
 
 # URLs dos provedores
 _URL_ANTHROPIC   = None                       # padrão do SDK
