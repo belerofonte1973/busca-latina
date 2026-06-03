@@ -1,0 +1,23 @@
+# Busca Latina — dependências para Windows 11 ARM (Snapdragon X / ARM64)
+# Instalar com: pip install -r requirements.txt
+
+# ── interface gráfica ─────────────────────────────────────────────────────────
+# PyQt6 tem wheels nativos ARM64 para Windows (win_arm64) desde a v6.4
+PyQt6>=6.6.0
+
+# ── pronúncia ─────────────────────────────────────────────────────────────────
+# edge-tts: Microsoft TTS neural via HTTP (não precisa de instalação local)
+edge-tts>=6.1.9
+
+# pygame: reprodução de MP3 gerado pelo edge-tts
+pygame>=2.5.0
+
+# pyttsx3: TTS offline via SAPI do Windows (fallback sem internet)
+pyttsx3>=2.90
+
+# ── IA e tradução ─────────────────────────────────────────────────────────────
+requests>=2.31.0
+anthropic>=0.34.0       # para Claude API (opcional)
+
+# ── análise latina ────────────────────────────────────────────────────────────
+# Sem dependências extras — whitakers_words.py usa apenas requests
