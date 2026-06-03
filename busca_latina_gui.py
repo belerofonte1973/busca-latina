@@ -1112,6 +1112,9 @@ class BuscaLatina(QMainWindow):
         """Quando o utilizador muda de modelo, pré-carrega o novo."""
         modelo = self._modelo_ollama()
         if modelo:  # None = "melhor disponível", não dispara pré-carregamento extra
+            if self._precarregar_thread is not None and self._precarregar_thread.isRunning():
+                self._precarregar_thread.terminate()
+                self._precarregar_thread.wait(500)
             self._iniciar_precarregamento(modelo)
 
     def _on_modelo_pronto(self, nome: str):
