@@ -10,6 +10,26 @@ from pathlib import Path
 SETTINGS_FILE = Path.home() / ".config" / "busca_latina" / "settings.json"
 CACHE_FILE    = Path.home() / ".config" / "busca_latina" / "traducoes.json"
 
+
+def _detectar_lingua(texto: str) -> str | None:
+    """
+    Detecta se o texto é principalmente grego ou latino pela distribuição
+    de codepoints Unicode. Devolve 'grc', 'la' ou None (inconclusivo).
+    Requer pelo menos 4 letras alfabéticas para emitir opinião.
+    """
+    grego = sum(1 for c in texto
+                if 'Ͱ' <= c <= 'Ͽ' or 'ἀ' <= c <= '῿')
+    latino = sum(1 for c in texto
+                 if c.isalpha() and ord(c) < 0x0370)
+    total = grego + latino
+    if total < 4:
+        return None
+    if grego / total >= 0.60:
+        return "grc"
+    if latino / total >= 0.60:
+        return "la"
+    return None
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTextEdit, QLabel, QSpinBox, QCheckBox,
@@ -1196,6 +1216,9 @@ class BuscaLatina(QMainWindow):
             self._perseus_dialog.pronunciar_pedido.connect(
                 self._pronunciar_texto_online
             )
+            self._perseus_dialog.texto_passagem.selectionChanged.connect(
+                self._on_selecao_dialog_mudada
+            )
         self._perseus_dialog.show()
         self._perseus_dialog.raise_()
         self._perseus_dialog.activateWindow()
@@ -1214,6 +1237,14 @@ class BuscaLatina(QMainWindow):
         """Traduz directamente o texto recebido da janela Textos Online."""
         self._selecao_salva = texto   # actualiza para outros usos (pronúncia, etc.)
         self._lancar_gemini(texto)
+
+    def _on_selecao_dialog_mudada(self):
+        """Detecta língua da selecção na janela Textos Online e ajusta vozes."""
+        if self._perseus_dialog is None:
+            return
+        sel = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+        if sel:
+            self._sincronizar_lingua(sel)
 
     def _pronunciar_texto_online(self, texto: str, lingua: str):
         """
@@ -1779,11 +1810,21 @@ class BuscaLatina(QMainWindow):
 
     # ── tradução e dicionário ─────────────────────────────────────────────────
 
+    def _sincronizar_lingua(self, texto: str):
+        """Detecta a língua do texto e actualiza combo_lingua + vozes se necessário."""
+        lingua = _detectar_lingua(texto)
+        if lingua is None:
+            return
+        idx = 1 if lingua == "grc" else 0
+        if self.combo_lingua.currentIndex() != idx:
+            self.combo_lingua.setCurrentIndex(idx)   # → _on_lingua_pron_mudada
+
     def _on_selecao_mudada(self):
-        """Guarda a selecção actual antes de ela ser perdida ao clicar botões."""
+        """Guarda a selecção e detecta a língua para ajustar vozes automaticamente."""
         sel = self.text.textCursor().selectedText().strip()
         if sel:
             self._selecao_salva = sel
+            self._sincronizar_lingua(sel)
 
     def _texto_selecionado(self) -> str:
         """
