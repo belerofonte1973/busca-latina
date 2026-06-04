@@ -492,7 +492,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
     texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
     traduzir_pedido  = pyqtSignal(str)   # texto a traduzir directamente (sem escala)
-    pronunciar_pedido = pyqtSignal(str)  # texto a pronunciar directamente
+    pronunciar_pedido = pyqtSignal(str, str)  # (texto, lingua: "grc"|"lat")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -783,7 +783,8 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
     def _on_pronunciar_online(self):
         texto = self._texto_activo()
         if texto:
-            self.pronunciar_pedido.emit(texto)
+            lingua = self._lingua()          # "grc" ou "lat"
+            self.pronunciar_pedido.emit(texto, lingua)
 
     def _enviar_para_traducao(self):
         texto = self.texto_passagem.toPlainText().strip()
@@ -1193,7 +1194,7 @@ class BuscaLatina(QMainWindow):
                 self._traduzir_texto_online
             )
             self._perseus_dialog.pronunciar_pedido.connect(
-                self._lancar_pronuncia
+                self._pronunciar_texto_online
             )
         self._perseus_dialog.show()
         self._perseus_dialog.raise_()
@@ -1213,6 +1214,20 @@ class BuscaLatina(QMainWindow):
         """Traduz directamente o texto recebido da janela Textos Online."""
         self._selecao_salva = texto   # actualiza para outros usos (pronúncia, etc.)
         self._lancar_gemini(texto)
+
+    def _pronunciar_texto_online(self, texto: str, lingua: str):
+        """
+        Pronuncia texto da janela Textos Online.
+        Sincroniza o combo_lingua da janela principal para que as vozes e
+        opções de variante correctas fiquem visíveis antes de pronunciar.
+        """
+        if not _PRONUNCIA_OK:
+            return
+        idx_pretendido = 1 if lingua == "grc" else 0
+        if self.combo_lingua.currentIndex() != idx_pretendido:
+            # Muda a língua → dispara _on_lingua_pron_mudada → actualiza vozes
+            self.combo_lingua.setCurrentIndex(idx_pretendido)
+        self._lancar_pronuncia(texto)
 
     # ── busca ─────────────────────────────────────────────────────────────────
 
