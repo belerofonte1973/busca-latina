@@ -67,10 +67,15 @@ VOZES = [
     ("la",                   "espeak-ng latim (offline)",              "espeak", "la"),
     ("it",                   "espeak-ng italiano (offline)",           "espeak", "la"),
     # ── grego ──────────────────────────────────────────────────────────────────
-    ("grc",                  "espeak-ng grego antigo (offline)",      "espeak", "grc"),
+    ("grc",                  "espeak grc — masc. padrão (offline)",   "espeak", "grc"),
+    ("grc+m3",               "espeak grc — masc. grave (offline)",    "espeak", "grc"),
+    ("grc+m5",               "espeak grc — masc. agudo (offline)",    "espeak", "grc"),
+    ("grc+f1",               "espeak grc — fem. padrão (offline)",    "espeak", "grc"),
+    ("grc+f3",               "espeak grc — fem. médio (offline)",     "espeak", "grc"),
+    ("grc+f5",               "espeak grc — fem. agudo (offline)",     "espeak", "grc"),
     ("el-GR-NestorasNeural", "Nestoras (grego mod. masc.) — online",  "edge",   "grc"),
     ("el-GR-AthinaNeural",   "Athina (grego mod. fem.) — online",     "edge",   "grc"),
-    ("el",                   "espeak-ng grego moderno (offline)",      "espeak", "grc"),
+    ("el",                   "espeak grego moderno (offline)",         "espeak", "grc"),
 ]
 
 # grupos para filtrar na GUI
