@@ -69,11 +69,34 @@ try:
 except ImportError:
     _PERSEUS_API_OK = False
 
-LATIN_LIB = Path.home() / "cltk_data/lat/text/lat_text_latin_library"
+LATIN_LIB  = Path.home() / "cltk_data/lat/text/lat_text_latin_library"
 PERSEUS    = Path.home() / "cltk_data/lat/text/lat_text_perseus"
+OGL_GREGO  = Path.home() / "cltk_data/grc/text/first1kgreek"
 
 STRIP_TAGS   = re.compile(r"<[^>]+>")
 _REGEX_CHARS = re.compile(r'[.^$*+?\[\]\\|()\{\}]')
+
+# metadados OGL: carregados uma vez (stem → {author, title})
+def _carregar_meta_ogl() -> dict:
+    import csv as _csv
+    csv_path = OGL_GREGO / "data" / "edition_metadata.csv"
+    if not csv_path.exists():
+        return {}
+    meta = {}
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            reader = _csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                stem = Path(row.get("Filename", "")).stem
+                meta[stem] = {
+                    "author": (row.get("Author", "") or "").strip(),
+                    "title":  (row.get("Title",  "") or "").strip(),
+                }
+    except Exception:
+        pass
+    return meta
+
+_OGL_META: dict | None = None   # carregado na primeira busca
 
 
 def build_pattern(term: str, ignore_case: bool = True) -> re.Pattern:
@@ -145,6 +168,15 @@ def label_perseus(path):
     work = path.stem.removesuffix("_lat").removesuffix("_grc")
     return author, work
 
+def label_ogl(path) -> tuple[str, str]:
+    global _OGL_META
+    if _OGL_META is None:
+        _OGL_META = _carregar_meta_ogl()
+    info = _OGL_META.get(path.stem, {})
+    autor  = info.get("author") or path.parts[-2]
+    titulo = info.get("title")  or path.stem
+    return autor, titulo
+
 def first_line_title(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -164,12 +196,13 @@ class SearchThread(QThread):
     finished  = pyqtSignal(int)
     status    = pyqtSignal(str)
 
-    def __init__(self, pattern, ctx, do_ll, do_perseus, max_results):
+    def __init__(self, pattern, ctx, do_ll, do_perseus, do_ogl, max_results):
         super().__init__()
         self.pattern     = pattern
         self.ctx         = ctx
         self.do_ll       = do_ll
         self.do_perseus  = do_perseus
+        self.do_ogl      = do_ogl
         self.max_results = max_results
         self._stop       = False
 
@@ -178,13 +211,15 @@ class SearchThread(QThread):
 
     def run(self):
         total = 0
-        sources = []
-        if self.do_ll and LATIN_LIB.exists():
-            sources.append((sorted(LATIN_LIB.rglob("*.txt")), False))
-        if self.do_perseus and PERSEUS.exists():
-            sources.append((sorted(PERSEUS.rglob("*_lat.xml")), True))
 
-        for files, is_xml in sources:
+        # ── fontes latinas ────────────────────────────────────────────────────
+        lat_sources = []
+        if self.do_ll and LATIN_LIB.exists():
+            lat_sources.append((sorted(LATIN_LIB.rglob("*.txt")), False))
+        if self.do_perseus and PERSEUS.exists():
+            lat_sources.append((sorted(PERSEUS.rglob("*_lat.xml")), True))
+
+        for files, is_xml in lat_sources:
             for path in files:
                 if self._stop:
                     self.finished.emit(total)
@@ -206,6 +241,34 @@ class SearchThread(QThread):
                         return
                     if self.pattern.search(line):
                         self.result.emit(corpus, author, work, i, lines, is_xml)
+                        total += 1
+                        if self.max_results and total >= self.max_results:
+                            self.finished.emit(total)
+                            return
+
+        # ── Open Greek and Latin ──────────────────────────────────────────────
+        if self.do_ogl and OGL_GREGO.exists():
+            # exclui ficheiros de tradução (_eng) e de aparato (_intro, textcrit)
+            ogl_files = sorted(
+                p for p in OGL_GREGO.rglob("*.xml")
+                if not any(s in p.stem for s in ("_eng", "_intro", "textcrit",
+                                                  "appcrit", "index"))
+            )
+            for path in ogl_files:
+                if self._stop:
+                    self.finished.emit(total)
+                    return
+                self.status.emit(f"Varrendo OGL: {path.name}…")
+                lines  = read_perseus_xml(path)
+                author, work = label_ogl(path)
+
+                for i, line in enumerate(lines):
+                    if self._stop:
+                        self.finished.emit(total)
+                        return
+                    if self.pattern.search(line):
+                        self.result.emit("Open Greek & Latin", author, work,
+                                         i, lines, True)
                         total += 1
                         if self.max_results and total >= self.max_results:
                             self.finished.emit(total)
@@ -792,7 +855,8 @@ class BuscaLatina(QMainWindow):
         cg_layout.setContentsMargins(0, 0, 0, 0)
         cg_layout.setSpacing(8)
         self.bg = QButtonGroup(self)
-        for i, lbl in enumerate(["Ambos", "Latin Library", "Perseus"]):
+        for i, lbl in enumerate(["Latim (ambos)", "Latin Library",
+                                  "Perseus (lat)", "Open Greek & Latin"]):
             rb = QRadioButton(lbl)
             self.bg.addButton(rb, i)
             cg_layout.addWidget(rb)
@@ -1114,9 +1178,10 @@ class BuscaLatina(QMainWindow):
         self._selecao_salva  = ""
         self.total = 0
 
-        corpus_id = self.bg.checkedId()
+        corpus_id  = self.bg.checkedId()
         do_ll      = corpus_id in (0, 1)
         do_perseus = corpus_id in (0, 2)
+        do_ogl     = corpus_id == 3
 
         if self.thread and self.thread.isRunning():
             self.thread.stop()
@@ -1125,7 +1190,7 @@ class BuscaLatina(QMainWindow):
         self.thread = SearchThread(
             self._pattern,
             self.spin_ctx.value(),
-            do_ll, do_perseus,
+            do_ll, do_perseus, do_ogl,
             self.spin_max.value(),
         )
         self.thread.result.connect(self._on_result)
