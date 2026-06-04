@@ -23,8 +23,6 @@ KEEP_ALIVE = "5m"   # descarregar modelo da RAM após 5 min de inatividade
 
 MODELOS_RECOMENDADOS = [
     ("phi3",      "Phi-3 Mini 3.8B  — rápido, leve"),
-    ("llama3.2",  "Llama 3.2 3B     — bom equilíbrio"),
-    ("mistral",   "Mistral 7B       — boa qualidade"),
     ("llama3.1",  "Llama 3.1 8B     — excelente qualidade"),
     ("gemma2",    "Gemma 2 9B       — muito boa qualidade"),
 ]

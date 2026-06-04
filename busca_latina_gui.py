@@ -516,7 +516,7 @@ class BuscaLatina(QMainWindow):
         self.combo_modelo.setMinimumWidth(180)
         self.combo_modelo.setToolTip(
             "Modelos Ollama instalados\n"
-            "Para instalar: ollama pull llama3.2"
+            "Para instalar: ollama pull phi3"
         )
         self.combo_modelo.addItem("(sem modelos — instale Ollama)", None)
         self.combo_modelo.currentIndexChanged.connect(self._on_modelo_mudado)
@@ -992,7 +992,7 @@ class BuscaLatina(QMainWindow):
         else:
             self.combo_modelo.addItem("(Ollama sem modelos)", None)
             self.status_bar.showMessage(
-                "Ollama sem modelos. Execute: ollama pull llama3.2"
+                "Ollama sem modelos. Execute: ollama pull phi3"
             )
 
     def _iniciar_precarregamento(self, modelo: str):
@@ -1058,7 +1058,7 @@ class BuscaLatina(QMainWindow):
         # feedback imediato antes de iniciar o thread
         rotulo = "Comentário" if modo == "comentario" else "Tradução →PT"
         self.trans_out.setPlainText(
-            f"⏳ {rotulo} com {modelo or 'llama3.2'}…\n\n"
+            f"⏳ {rotulo} com {modelo or 'phi3'}…\n\n"
             f"(1.ª vez pode demorar 30–60 s enquanto o modelo carrega)"
         )
 
