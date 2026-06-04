@@ -29,7 +29,9 @@ XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 
 # elementos TEI cujo conteúdo de texto deve ser ignorado
 _IGNORAR_TAGS = {"teiheader", "note", "bibl", "figdesc", "foreign",
-                 "app", "rdg", "lem"}
+                 "app", "rdg", "lem",
+                 # metadados CTS (wrapper da resposta, não conteúdo TEI)
+                 "request", "requestname", "requesturn", "urn"}
 
 
 # ── utilitários internos ──────────────────────────────────────────────────────
