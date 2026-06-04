@@ -1217,16 +1217,27 @@ class BuscaLatina(QMainWindow):
 
     def _pronunciar_texto_online(self, texto: str, lingua: str):
         """
-        Pronuncia texto da janela Textos Online.
-        Sincroniza o combo_lingua da janela principal para que as vozes e
-        opções de variante correctas fiquem visíveis antes de pronunciar.
+        Pronuncia texto da janela Textos Online usando sempre voz neural (edge-tts).
+        Sincroniza combo_lingua e, se a voz activa for espeak-ng, substitui
+        pela primeira voz neural disponível para essa língua.
         """
         if not _PRONUNCIA_OK:
             return
         idx_pretendido = 1 if lingua == "grc" else 0
         if self.combo_lingua.currentIndex() != idx_pretendido:
-            # Muda a língua → dispara _on_lingua_pron_mudada → actualiza vozes
-            self.combo_lingua.setCurrentIndex(idx_pretendido)
+            self.combo_lingua.setCurrentIndex(idx_pretendido)   # → _on_lingua_pron_mudada
+
+        # Garante voz neural: se a voz seleccionada for espeak-ng, troca
+        vozes_ref = VOZES_GREGO if lingua == "grc" else VOZES_LATIM
+        voz_atual = self._voz_selecionada()
+        motor     = next((v[2] for v in vozes_ref if v[0] == voz_atual), "espeak")
+        if motor == "espeak":
+            voz_neural = next((v[0] for v in vozes_ref if v[2] == "edge"), None)
+            if voz_neural:
+                for i in range(self.combo_voz.count()):
+                    if self.combo_voz.itemData(i) == voz_neural:
+                        self.combo_voz.setCurrentIndex(i)
+                        break
         self._lancar_pronuncia(texto)
 
     # ── busca ─────────────────────────────────────────────────────────────────
