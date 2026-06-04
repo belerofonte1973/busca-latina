@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Busca Latina — interface gráfica (PyQt5)"""
+"""Busca Greco-Latina — interface gráfica (PyQt5)"""
 
 import sys
 import re
@@ -843,7 +843,7 @@ class BuscaLatina(QMainWindow):
     # ── construção da UI ──────────────────────────────────────────────────────
 
     def _build_ui(self):
-        self.setWindowTitle("Busca Latina")
+        self.setWindowTitle("Busca Greco-Latina")
         self.resize(1000, 700)
 
         central = QWidget()
@@ -2005,7 +2005,7 @@ class BuscaLatina(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Busca Latina")
+    app.setApplicationName("Busca Greco-Latina")
     app.setOrganizationName("belerofonte")
     win = BuscaLatina()
     win.show()
