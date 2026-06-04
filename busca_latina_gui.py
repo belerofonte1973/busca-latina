@@ -486,7 +486,8 @@ class PercPassThread(QThread):
 class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
     """Navegador de textos gregos e latinos do Perseus Project (CTS API)."""
 
-    texto_enviado = pyqtSignal(str)   # texto a enviar para a janela principal
+    texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
+    traduzir_pedido  = pyqtSignal(str)   # texto a traduzir directamente (sem escala)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -587,6 +588,14 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
         # barra de botões inferior
         btn_row = QHBoxLayout()
+        self.btn_traduzir = QPushButton("🌟 Traduzir →PT")
+        self.btn_traduzir.setEnabled(False)
+        self.btn_traduzir.setToolTip(
+            "Traduz o texto seleccionado (ou toda a passagem) com Gemini"
+        )
+        self.btn_traduzir.clicked.connect(self._on_traduzir)
+        btn_row.addWidget(self.btn_traduzir)
+
         self.btn_enviar = QPushButton("Enviar para tradução →")
         self.btn_enviar.setEnabled(False)
         self.btn_enviar.setToolTip(
@@ -630,6 +639,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.lista_obras.clear()
         self.combo_refs.clear()
         self.btn_carregar.setEnabled(False)
+        self.btn_traduzir.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
@@ -667,6 +677,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.texto_passagem.clear()
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_carregar.setEnabled(False)
+        self.btn_traduzir.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self._carregar_catalogo()
@@ -730,8 +741,10 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
     def _on_passagem_pronta(self, texto: str):
         self.texto_passagem.setPlainText(texto)
         self.btn_carregar.setEnabled(True)
-        self.btn_enviar.setEnabled(bool(texto.strip()))
-        self.btn_copiar.setEnabled(bool(texto.strip()))
+        tem = bool(texto.strip())
+        self.btn_traduzir.setEnabled(tem)
+        self.btn_enviar.setEnabled(tem)
+        self.btn_copiar.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
 
     def _on_passagem_erro(self, msg: str):
@@ -740,6 +753,16 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.lbl_pass_status.setText("⚠ Erro.")
 
     # ── ações do utilizador ───────────────────────────────────────────────────
+
+    def _texto_activo(self) -> str:
+        """Devolve a selecção activa ou, se não houver, toda a passagem."""
+        sel = self.texto_passagem.textCursor().selectedText().strip()
+        return sel if sel else self.texto_passagem.toPlainText().strip()
+
+    def _on_traduzir(self):
+        texto = self._texto_activo()
+        if texto:
+            self.traduzir_pedido.emit(texto)
 
     def _enviar_para_traducao(self):
         texto = self.texto_passagem.toPlainText().strip()
@@ -1142,6 +1165,9 @@ class BuscaLatina(QMainWindow):
             self._perseus_dialog.texto_enviado.connect(
                 self.definir_texto_para_traduzir
             )
+            self._perseus_dialog.traduzir_pedido.connect(
+                self._traduzir_texto_online
+            )
         self._perseus_dialog.show()
         self._perseus_dialog.raise_()
         self._perseus_dialog.activateWindow()
@@ -1155,6 +1181,11 @@ class BuscaLatina(QMainWindow):
         self.status_bar.showMessage(
             "Texto Perseus carregado — clique em Traduzir →PT ou Comentário."
         )
+
+    def _traduzir_texto_online(self, texto: str):
+        """Traduz directamente o texto recebido da janela Textos Online."""
+        self._selecao_salva = texto
+        self._on_gemini_traduzir()
 
     # ── busca ─────────────────────────────────────────────────────────────────
 
@@ -1539,11 +1570,16 @@ class BuscaLatina(QMainWindow):
     # ── pronúncia ─────────────────────────────────────────────────────────────
 
     def _texto_para_pronunciar(self) -> str:
-        # 1. Selecção manual tem prioridade
+        # 1. Selecção manual no painel principal
         sel = self.text.textCursor().selectedText().strip()
         if sel:
             sel = re.sub(r'^[▶■─=\s]+', '', sel, flags=re.MULTILINE)
             return sel.strip()
+        # 1b. Selecção na janela Textos Online
+        if self._perseus_dialog is not None and self._perseus_dialog.isVisible():
+            sel_online = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+            if sel_online:
+                return sel_online
         # 2. Passagem activa (último resultado exibido / obra seleccionada)
         if self._texto_pronunciar:
             return self._texto_pronunciar
@@ -1629,13 +1665,18 @@ class BuscaLatina(QMainWindow):
         """
         Devolve o texto a traduzir/pronunciar.
         Prioridade:
-          1. Selecção activa no widget
-          2. Última selecção guardada (antes de perder foco ao clicar botão)
-          3. Primeiro bloco limpo do resultado actual
+          1. Selecção activa no painel principal
+          2. Selecção activa na janela Textos Online
+          3. Última selecção guardada (antes de perder foco ao clicar botão)
+          4. Primeiro bloco limpo do resultado actual
         """
         sel = self.text.textCursor().selectedText().strip()
         if sel:
             return sel
+        if self._perseus_dialog is not None and self._perseus_dialog.isVisible():
+            sel_online = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+            if sel_online:
+                return sel_online
         if self._selecao_salva:
             return self._selecao_salva
         # Usa o primeiro bloco limpo (sem marcadores de formatação)
