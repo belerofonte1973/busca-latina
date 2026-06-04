@@ -4,9 +4,11 @@
 import sys
 import re
 import json
+import hashlib
 from pathlib import Path
 
 SETTINGS_FILE = Path.home() / ".config" / "busca_latina" / "settings.json"
+CACHE_FILE    = Path.home() / ".config" / "busca_latina" / "traducoes.json"
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -377,6 +379,7 @@ class BuscaLatina(QMainWindow):
         self._selecao_salva       = ""   # última selecção antes de perder foco
         self._settings_timer      = None
         self._reiniciar_timer     = None
+        self._cache               = self._cache_carregar()
         self._build_ui()
         self._carregar_settings()
 
@@ -922,6 +925,12 @@ class BuscaLatina(QMainWindow):
         modelo = self.combo_gemini_modelo.currentData() or GEMINI_DEFAULT
         lingua = self._lingua_ollama()
 
+        cached = self._cache_verificar(texto, lingua, modelo)
+        if cached:
+            self.trans_out.setPlainText(cached)
+            self.status_bar.showMessage("✓ Tradução do histórico.")
+            return
+
         if self._gemini_thread is not None and self._gemini_thread.isRunning():
             self._gemini_thread.stop()
             self._gemini_thread.wait(1000)
@@ -931,7 +940,12 @@ class BuscaLatina(QMainWindow):
         self._gemini_thread.chunk.connect(self._on_ollama_chunk)
         self._gemini_thread.status.connect(self.status_bar.showMessage)
         self._gemini_thread.done.connect(
-            lambda: self.status_bar.showMessage("✓ Tradução Gemini concluída."))
+            lambda: (
+                self._cache_guardar(texto, lingua, modelo,
+                                    self.trans_out.toPlainText()),
+                self.status_bar.showMessage("✓ Tradução Gemini concluída."),
+            )
+        )
         self._gemini_thread.erro.connect(
             lambda e: self.trans_out.setPlainText(f"⚠ Erro Gemini: {e}"))
         self._gemini_thread.start()
@@ -1050,6 +1064,12 @@ class BuscaLatina(QMainWindow):
         modelo = self._modelo_ollama()
         lingua = "comentario" if modo == "comentario" else self._lingua_ollama()
 
+        cached = self._cache_verificar(texto, lingua, modelo)
+        if cached:
+            self.trans_out.setPlainText(cached)
+            self.status_bar.showMessage("✓ Tradução do histórico.")
+            return
+
         # cancela thread anterior (sem chamar isRunning() em None)
         if self._ollama_thread is not None and self._ollama_thread.isRunning():
             self._ollama_thread.stop()
@@ -1065,7 +1085,11 @@ class BuscaLatina(QMainWindow):
         self._ollama_thread = OllamaThread(texto, lingua, modelo)
         self._ollama_thread.chunk.connect(self._on_ollama_chunk)
         self._ollama_thread.done.connect(
-            lambda: self.status_bar.showMessage("✓ Tradução IA concluída.")
+            lambda: (
+                self._cache_guardar(texto, lingua, modelo,
+                                    self.trans_out.toPlainText()),
+                self.status_bar.showMessage("✓ Tradução IA concluída."),
+            )
         )
         self._ollama_thread.erro.connect(
             lambda e: self.trans_out.setPlainText(f"⚠ Erro Ollama: {e}")
@@ -1252,6 +1276,42 @@ class BuscaLatina(QMainWindow):
         if hasattr(self, '_ollama_thread') and self._ollama_thread.isRunning():
             self._ollama_thread.stop()
             self.status_bar.showMessage("Geração interrompida.")
+
+    # ── cache de traduções ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _cache_chave(texto: str, lingua: str, modelo: str) -> str:
+        raw = f"{texto.strip()}|||{lingua}|||{modelo}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+    def _cache_carregar(self) -> dict:
+        try:
+            return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _cache_verificar(self, texto: str, lingua: str, modelo: str) -> str | None:
+        entrada = self._cache.get(self._cache_chave(texto, lingua, modelo))
+        return entrada["traducao"] if entrada else None
+
+    def _cache_guardar(self, texto: str, lingua: str, modelo: str, traducao: str):
+        if not traducao.strip():
+            return
+        chave = self._cache_chave(texto, lingua, modelo)
+        self._cache[chave] = {
+            "texto":    texto.strip(),
+            "lingua":   lingua,
+            "modelo":   modelo,
+            "traducao": traducao,
+        }
+        try:
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE_FILE.write_text(
+                json.dumps(self._cache, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     # ── persistência de configurações ────────────────────────────────────────
 
