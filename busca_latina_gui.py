@@ -505,6 +505,32 @@ class PercPassThread(QThread):
             self.erro.emit(str(e))
 
 
+class PercObraCompletaThread(QThread):
+    progresso = pyqtSignal(int, int)   # (actual, total)
+    pronto    = pyqtSignal(str)
+    erro      = pyqtSignal(str)
+
+    def __init__(self, edicao_urn: str):
+        super().__init__()
+        self._urn  = edicao_urn
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        try:
+            texto = _papi.obter_obra_completa(
+                self._urn,
+                progresso_cb=lambda a, t: self.progresso.emit(a, t),
+                should_stop=lambda: self._stop,
+            )
+            if not self._stop:
+                self.pronto.emit(texto)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
 # ── diálogo Perseus Online ────────────────────────────────────────────────────
 
 class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
@@ -521,6 +547,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self._cat_thr  = None
         self._refs_thr = None
         self._pass_thr = None
+        self._obra_completa_thr = None
         self._edicao_urn_sel = ""
         self._refs    = []
         self._build()
@@ -612,6 +639,14 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
         # barra de botões inferior
         btn_row = QHBoxLayout()
+        self.btn_obra_completa = QPushButton("📥 Obra completa")
+        self.btn_obra_completa.setEnabled(False)
+        self.btn_obra_completa.setToolTip(
+            "Descarrega todas as secções da obra e apresenta o texto integral"
+        )
+        self.btn_obra_completa.clicked.connect(self._on_obra_completa)
+        btn_row.addWidget(self.btn_obra_completa)
+
         self.btn_traduzir = QPushButton("🌟 Traduzir →PT")
         self.btn_traduzir.setEnabled(False)
         self.btn_traduzir.setToolTip(
@@ -663,6 +698,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.lista_obras.clear()
         self.combo_refs.clear()
         self.btn_carregar.setEnabled(False)
+        self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
@@ -701,6 +737,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.texto_passagem.clear()
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_carregar.setEnabled(False)
+        self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
@@ -736,13 +773,16 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         for urn in refs:
             lbl = _papi.label_referencia(urn)
             self.combo_refs.addItem(lbl, urn)
-        self.btn_carregar.setEnabled(bool(refs))
+        tem_refs = bool(refs)
+        self.btn_carregar.setEnabled(tem_refs)
+        self.btn_obra_completa.setEnabled(tem_refs)
         self.lbl_pass_status.setText(
             f"✓ {len(refs)} referências." if refs else "Sem referências."
         )
 
     def _on_refs_erro(self, msg: str):
         self.combo_refs.clear()
+        self.btn_obra_completa.setEnabled(False)
         self.lbl_pass_status.setText(f"⚠ Refs: {msg}")
 
     # ── carregar passagem ─────────────────────────────────────────────────────
@@ -782,6 +822,44 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         """Devolve a selecção activa ou, se não houver, toda a passagem."""
         sel = self.texto_passagem.textCursor().selectedText().strip()
         return sel if sel else self.texto_passagem.toPlainText().strip()
+
+    def _on_obra_completa(self):
+        if not self._edicao_urn_sel:
+            return
+        if self._obra_completa_thr and self._obra_completa_thr.isRunning():
+            self._obra_completa_thr.stop()
+            self._obra_completa_thr.wait(2000)
+
+        n = len(self._refs)
+        self.texto_passagem.setPlainText(f"⏳ A descarregar obra completa… 0/{n} secções")
+        self.btn_obra_completa.setEnabled(False)
+        self.btn_carregar.setEnabled(False)
+
+        self._obra_completa_thr = PercObraCompletaThread(self._edicao_urn_sel)
+        self._obra_completa_thr.progresso.connect(self._on_obra_progresso)
+        self._obra_completa_thr.pronto.connect(self._on_obra_pronta)
+        self._obra_completa_thr.erro.connect(self._on_obra_erro)
+        self._obra_completa_thr.start()
+
+    def _on_obra_progresso(self, atual: int, total: int):
+        self.lbl_pass_status.setText(f"⏳ {atual}/{total} secções…")
+
+    def _on_obra_pronta(self, texto: str):
+        self.texto_passagem.setPlainText(texto)
+        self.btn_obra_completa.setEnabled(True)
+        self.btn_carregar.setEnabled(True)
+        tem = bool(texto.strip())
+        self.btn_traduzir.setEnabled(tem)
+        self.btn_enviar.setEnabled(tem)
+        self.btn_copiar.setEnabled(tem)
+        palavras = len(texto.split())
+        self.lbl_pass_status.setText(f"✓ Obra completa — {palavras} palavras.")
+
+    def _on_obra_erro(self, msg: str):
+        self.texto_passagem.setPlainText(f"⚠ Erro ao descarregar obra:\n{msg}")
+        self.btn_obra_completa.setEnabled(True)
+        self.btn_carregar.setEnabled(True)
+        self.lbl_pass_status.setText("⚠ Erro.")
 
     def _on_traduzir(self):
         texto = self._texto_activo()

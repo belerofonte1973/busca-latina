@@ -204,6 +204,45 @@ def obter_passagem(urn: str) -> str:
     return _extrair_texto(xml_str)
 
 
+def obter_obra_completa(edicao_urn: str,
+                        progresso_cb=None,
+                        should_stop=None,
+                        workers: int = 5) -> str:
+    """
+    Descarrega a obra completa concatenando todas as passagens de nível 1
+    em paralelo (até `workers` pedidos simultâneos).
+
+    progresso_cb(atual, total) — chamado após cada passagem concluída.
+    should_stop()              — se devolver True, cancela e devolve ''.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    refs = obter_referencias(edicao_urn, nivel=1)
+    if not refs:
+        return ""
+
+    total      = len(refs)
+    resultados = [None] * total
+
+    with ThreadPoolExecutor(max_workers=workers) as exe:
+        futuros = {exe.submit(obter_passagem, urn): i
+                   for i, urn in enumerate(refs)}
+        concluidos = 0
+        for fut in as_completed(futuros):
+            if should_stop and should_stop():
+                return ""
+            i = futuros[fut]
+            try:
+                resultados[i] = fut.result()
+            except Exception as e:
+                resultados[i] = f"[Erro — {label_referencia(refs[i])}: {e}]"
+            concluidos += 1
+            if progresso_cb:
+                progresso_cb(concluidos, total)
+
+    return "\n\n".join(r for r in resultados if r)
+
+
 def label_referencia(urn: str) -> str:
     """Transforma 'urn:cts:...:1.2' em '1.2'."""
     return urn.rsplit(":", 1)[-1] if ":" in urn else urn
