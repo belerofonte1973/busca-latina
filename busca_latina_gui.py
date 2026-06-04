@@ -63,6 +63,12 @@ try:
 except ImportError:
     _WHITAKER_OK = False
 
+try:
+    import perseus_api as _papi
+    _PERSEUS_API_OK = True
+except ImportError:
+    _PERSEUS_API_OK = False
+
 LATIN_LIB = Path.home() / "cltk_data/lat/text/lat_text_latin_library"
 PERSEUS    = Path.home() / "cltk_data/lat/text/lat_text_perseus"
 
@@ -361,6 +367,328 @@ class TranslateThread(QThread):
             self.done.emit(f"[Erro: {e}]")
 
 
+# ── threads Perseus Online ────────────────────────────────────────────────────
+
+class PercCatalogThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, lingua: str, forcar: bool = False):
+        super().__init__()
+        self.lingua  = lingua
+        self.forcar  = forcar
+
+    def run(self):
+        try:
+            obras = _papi.obter_catalogo(self.lingua, forcar=self.forcar)
+            self.pronto.emit(obras)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class PercRefsThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, edicao_urn: str):
+        super().__init__()
+        self.edicao_urn = edicao_urn
+
+    def run(self):
+        try:
+            refs = _papi.obter_referencias(self.edicao_urn, nivel=1)
+            self.pronto.emit(refs)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class PercPassThread(QThread):
+    pronto = pyqtSignal(str)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, urn: str):
+        super().__init__()
+        self.urn = urn
+
+    def run(self):
+        try:
+            texto = _papi.obter_passagem(self.urn)
+            self.pronto.emit(texto)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+# ── diálogo Perseus Online ────────────────────────────────────────────────────
+
+class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
+    """Navegador de textos gregos e latinos do Perseus Project (CTS API)."""
+
+    texto_enviado = pyqtSignal(str)   # texto a enviar para a janela principal
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Textos Online — Perseus Project")
+        self.resize(1050, 650)
+        self._obras    = []
+        self._cat_thr  = None
+        self._refs_thr = None
+        self._pass_thr = None
+        self._edicao_urn_sel = ""
+        self._refs    = []
+        self._build()
+
+    # ── construção da UI ──────────────────────────────────────────────────────
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(6)
+
+        # cabeçalho
+        tit = QLabel(
+            "<b>Perseus Project — CTS API</b>  "
+            "<small>(cts.perseids.org · acesso livre · textos gregos e latinos)</small>"
+        )
+        root.addWidget(tit)
+
+        # splitter principal
+        split = QSplitter(Qt.Horizontal)
+
+        # ── painel esquerdo: catálogo ──────────────────────────────────────────
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 4, 0)
+        ll.setSpacing(4)
+
+        # língua
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Língua:"))
+        self.combo_lingua = QComboBox()
+        self.combo_lingua.addItem("Grego (grc)", "grc")
+        self.combo_lingua.addItem("Latim (lat)", "lat")
+        self.combo_lingua.currentIndexChanged.connect(self._on_lingua_mudada)
+        lang_row.addWidget(self.combo_lingua)
+        lang_row.addStretch()
+        self.btn_reload = QPushButton("⟳")
+        self.btn_reload.setFixedWidth(32)
+        self.btn_reload.setToolTip("Forçar actualização do catálogo (ignora cache)")
+        self.btn_reload.clicked.connect(self._carregar_catalogo_forcar)
+        lang_row.addWidget(self.btn_reload)
+        ll.addLayout(lang_row)
+
+        # filtro
+        self.filtro = QLineEdit()
+        self.filtro.setPlaceholderText("Filtrar autor ou obra…")
+        self.filtro.textChanged.connect(self._filtrar)
+        ll.addWidget(self.filtro)
+
+        # lista de obras
+        self.lista_obras = QListWidget()
+        self.lista_obras.currentRowChanged.connect(self._on_obra_sel)
+        ll.addWidget(self.lista_obras, 1)
+
+        self.lbl_cat_status = QLabel("A carregar catálogo…")
+        self.lbl_cat_status.setWordWrap(True)
+        ll.addWidget(self.lbl_cat_status)
+
+        left.setMinimumWidth(280)
+        split.addWidget(left)
+
+        # ── painel direito: leitor de passagens ───────────────────────────────
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(4, 0, 0, 0)
+        rl.setSpacing(4)
+
+        self.lbl_obra_sel = QLabel("<i>(nenhuma obra selecionada)</i>")
+        self.lbl_obra_sel.setWordWrap(True)
+        rl.addWidget(self.lbl_obra_sel)
+
+        ref_row = QHBoxLayout()
+        ref_row.addWidget(QLabel("Referência (livro/secção):"))
+        self.combo_refs = QComboBox()
+        self.combo_refs.setMinimumWidth(120)
+        ref_row.addWidget(self.combo_refs, 1)
+        self.btn_carregar = QPushButton("Carregar passagem")
+        self.btn_carregar.setEnabled(False)
+        self.btn_carregar.clicked.connect(self._carregar_passagem)
+        ref_row.addWidget(self.btn_carregar)
+        rl.addLayout(ref_row)
+
+        self.texto_passagem = QTextEdit()
+        self.texto_passagem.setReadOnly(True)
+        self.texto_passagem.setFont(QFont("serif", 11))
+        self.texto_passagem.setPlaceholderText(
+            "Selecione uma obra à esquerda e depois uma referência acima."
+        )
+        rl.addWidget(self.texto_passagem, 1)
+
+        # barra de botões inferior
+        btn_row = QHBoxLayout()
+        self.btn_enviar = QPushButton("Enviar para tradução →")
+        self.btn_enviar.setEnabled(False)
+        self.btn_enviar.setToolTip(
+            "Envia o texto desta passagem para a área de tradução da janela principal"
+        )
+        self.btn_enviar.clicked.connect(self._enviar_para_traducao)
+        btn_row.addWidget(self.btn_enviar)
+
+        self.btn_copiar = QPushButton("Copiar texto")
+        self.btn_copiar.setEnabled(False)
+        self.btn_copiar.clicked.connect(self._copiar_texto)
+        btn_row.addWidget(self.btn_copiar)
+        btn_row.addStretch()
+
+        self.lbl_pass_status = QLabel("")
+        btn_row.addWidget(self.lbl_pass_status)
+        rl.addLayout(btn_row)
+
+        split.addWidget(right)
+        split.setSizes([300, 750])
+        root.addWidget(split, 1)
+
+        # nota sobre TLG
+        nota = QLabel(
+            "<small>TLG (Thesaurus Linguae Graecae) requer subscrição institucional e não "
+            "tem API pública. Acesso web: <a href='https://stephanus.tlg.uci.edu'>"
+            "stephanus.tlg.uci.edu</a></small>"
+        )
+        nota.setOpenExternalLinks(True)
+        root.addWidget(nota)
+
+        # carrega catálogo ao abrir
+        self._carregar_catalogo()
+
+    # ── catálogo ──────────────────────────────────────────────────────────────
+
+    def _lingua(self) -> str:
+        return self.combo_lingua.currentData()
+
+    def _carregar_catalogo(self, forcar: bool = False):
+        self.lista_obras.clear()
+        self.combo_refs.clear()
+        self.btn_carregar.setEnabled(False)
+        self.btn_enviar.setEnabled(False)
+        self.btn_copiar.setEnabled(False)
+        self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
+        self._cat_thr = PercCatalogThread(self._lingua(), forcar)
+        self._cat_thr.pronto.connect(self._on_catalogo_pronto)
+        self._cat_thr.erro.connect(self._on_catalogo_erro)
+        self._cat_thr.start()
+
+    def _carregar_catalogo_forcar(self):
+        self._carregar_catalogo(forcar=True)
+
+    def _on_catalogo_pronto(self, obras: list):
+        self._obras = obras
+        self._filtrar(self.filtro.text())
+        n = len(obras)
+        self.lbl_cat_status.setText(f"✓ {n} edições disponíveis.")
+
+    def _on_catalogo_erro(self, msg: str):
+        self.lbl_cat_status.setText(f"⚠ Erro: {msg}")
+
+    def _filtrar(self, query: str = ""):
+        self.lista_obras.clear()
+        q = query.lower()
+        for o in self._obras:
+            if not q or q in o["display"].lower():
+                item = QListWidgetItem(o["display"])
+                item.setData(Qt.UserRole, o)
+                self.lista_obras.addItem(item)
+
+    def _on_lingua_mudada(self):
+        self.filtro.clear()
+        self._obras = []
+        self._refs  = []
+        self.combo_refs.clear()
+        self.texto_passagem.clear()
+        self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
+        self.btn_carregar.setEnabled(False)
+        self.btn_enviar.setEnabled(False)
+        self.btn_copiar.setEnabled(False)
+        self._carregar_catalogo()
+
+    # ── obra selecionada → carregar referências ───────────────────────────────
+
+    def _on_obra_sel(self, row: int):
+        item = self.lista_obras.item(row)
+        if item is None:
+            return
+        obra = item.data(Qt.UserRole)
+        if not obra:
+            return
+        self._edicao_urn_sel = obra["edicao_urn"]
+        self.lbl_obra_sel.setText(
+            f"<b>{obra['display']}</b><br>"
+            f"<small>{obra['edicao_urn']}</small>"
+        )
+        self.combo_refs.clear()
+        self.combo_refs.addItem("(a carregar…)", "")
+        self.btn_carregar.setEnabled(False)
+        self.lbl_pass_status.setText("A carregar referências…")
+
+        self._refs_thr = PercRefsThread(obra["edicao_urn"])
+        self._refs_thr.pronto.connect(self._on_refs_prontas)
+        self._refs_thr.erro.connect(self._on_refs_erro)
+        self._refs_thr.start()
+
+    def _on_refs_prontas(self, refs: list):
+        self._refs = refs
+        self.combo_refs.clear()
+        for urn in refs:
+            lbl = _papi.label_referencia(urn)
+            self.combo_refs.addItem(lbl, urn)
+        self.btn_carregar.setEnabled(bool(refs))
+        self.lbl_pass_status.setText(
+            f"✓ {len(refs)} referências." if refs else "Sem referências."
+        )
+
+    def _on_refs_erro(self, msg: str):
+        self.combo_refs.clear()
+        self.lbl_pass_status.setText(f"⚠ Refs: {msg}")
+
+    # ── carregar passagem ─────────────────────────────────────────────────────
+
+    def _carregar_passagem(self):
+        urn = self.combo_refs.currentData()
+        if not urn:
+            urn = self._edicao_urn_sel
+        if not urn:
+            return
+        self.texto_passagem.setPlainText("⏳ A carregar passagem…")
+        self.btn_carregar.setEnabled(False)
+        self.lbl_pass_status.setText("A buscar…")
+
+        self._pass_thr = PercPassThread(urn)
+        self._pass_thr.pronto.connect(self._on_passagem_pronta)
+        self._pass_thr.erro.connect(self._on_passagem_erro)
+        self._pass_thr.start()
+
+    def _on_passagem_pronta(self, texto: str):
+        self.texto_passagem.setPlainText(texto)
+        self.btn_carregar.setEnabled(True)
+        self.btn_enviar.setEnabled(bool(texto.strip()))
+        self.btn_copiar.setEnabled(bool(texto.strip()))
+        self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
+
+    def _on_passagem_erro(self, msg: str):
+        self.texto_passagem.setPlainText(f"⚠ Erro ao carregar passagem:\n{msg}")
+        self.btn_carregar.setEnabled(True)
+        self.lbl_pass_status.setText("⚠ Erro.")
+
+    # ── ações do utilizador ───────────────────────────────────────────────────
+
+    def _enviar_para_traducao(self):
+        texto = self.texto_passagem.toPlainText().strip()
+        if texto:
+            self.texto_enviado.emit(texto)
+
+    def _copiar_texto(self):
+        texto = self.texto_passagem.toPlainText()
+        QApplication.clipboard().setText(texto)
+        self.lbl_pass_status.setText("✓ Copiado.")
+
+
 # ── janela principal ──────────────────────────────────────────────────────────
 
 class BuscaLatina(QMainWindow):
@@ -380,6 +708,7 @@ class BuscaLatina(QMainWindow):
         self._settings_timer      = None
         self._reiniciar_timer     = None
         self._cache               = self._cache_carregar()
+        self._perseus_dialog      = None
         self._build_ui()
         self._carregar_settings()
 
@@ -415,6 +744,14 @@ class BuscaLatina(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._on_stop)
         search_row.addWidget(self.btn_stop)
+
+        if _PERSEUS_API_OK:
+            self.btn_perseus = QPushButton("🌐 Textos Online")
+            self.btn_perseus.setToolTip(
+                "Navegar textos gregos e latinos do Perseus Project (online)"
+            )
+            self.btn_perseus.clicked.connect(self._on_perseus_online)
+            search_row.addWidget(self.btn_perseus)
 
         root.addLayout(search_row)
 
@@ -730,6 +1067,30 @@ class BuscaLatina(QMainWindow):
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
         return sep
+
+    # ── Perseus Online ────────────────────────────────────────────────────────
+
+    def _on_perseus_online(self):
+        if not _PERSEUS_API_OK:
+            return
+        if self._perseus_dialog is None:
+            self._perseus_dialog = PerseusOnlineDialog(self)
+            self._perseus_dialog.texto_enviado.connect(
+                self.definir_texto_para_traduzir
+            )
+        self._perseus_dialog.show()
+        self._perseus_dialog.raise_()
+        self._perseus_dialog.activateWindow()
+
+    def definir_texto_para_traduzir(self, texto: str):
+        """Recebe texto do Perseus Online e prepara-o para tradução."""
+        self._selecao_salva = texto
+        self.trans_out.setPlainText(
+            "📜 Texto do Perseus Project (pronto para traduzir):\n\n" + texto
+        )
+        self.status_bar.showMessage(
+            "Texto Perseus carregado — clique em Traduzir →PT ou Comentário."
+        )
 
     # ── busca ─────────────────────────────────────────────────────────────────
 
