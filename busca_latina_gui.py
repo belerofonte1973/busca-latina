@@ -854,6 +854,13 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.btn_copiar.setEnabled(tem)
         palavras = len(texto.split())
         self.lbl_pass_status.setText(f"✓ Obra completa — {palavras} palavras.")
+        # Selecciona amostra inicial → dispara selectionChanged →
+        # _on_selecao_dialog_mudada → _sincronizar_lingua (voz automática)
+        if tem:
+            cursor = self.texto_passagem.textCursor()
+            cursor.setPosition(0)
+            cursor.setPosition(min(400, len(texto)), cursor.KeepAnchor)
+            self.texto_passagem.setTextCursor(cursor)
 
     def _on_obra_erro(self, msg: str):
         self.texto_passagem.setPlainText(f"⚠ Erro ao descarregar obra:\n{msg}")

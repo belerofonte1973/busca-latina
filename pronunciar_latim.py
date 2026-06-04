@@ -161,17 +161,21 @@ def ipa_grego(texto: str) -> str:
 # ── controlo de reprodução ────────────────────────────────────────────────────
 
 def parar():
-    """Interrompe TTS e reprodução em curso."""
+    """Interrompe TTS e reprodução em curso (mata o grupo de processos inteiro)."""
     global _proc_tts, _proc_audio
-    for p in (_proc_tts, _proc_audio):
-        if p and p.poll() is None:
+    for proc in (_proc_tts, _proc_audio):
+        if proc and proc.poll() is None:
             try:
-                p.terminate()
-                p.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                p.kill()
-            except Exception:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
                 pass
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    proc.kill()
     _proc_tts   = None
     _proc_audio = None
 
