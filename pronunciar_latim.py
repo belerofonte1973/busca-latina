@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pronunciar_latim.py — Pronúncia de latim com múltiplos motores de voz
+pronunciar_latim.py — Pronúncia de latim e grego antigo com múltiplos motores
 
 Motores disponíveis
 -------------------
@@ -15,14 +15,27 @@ Vozes sugeridas para latim
   es-ES-ElviraNeural   — espanhol fem.  (bom para eclesiástico)
   la (espeak-ng)       — voz latina sintética (offline)
 
+Vozes sugeridas para grego antigo
+----------------------------------
+  grc (espeak-ng)          — pronúncia reconstituída (offline, recomendado)
+  el-GR-NestorasNeural     — grego moderno masc. neural (online)
+  el-GR-AthinaNeural       — grego moderno fem. neural (online)
+  el (espeak-ng)           — grego moderno sintético (offline)
+
+  Nota: edge-tts com vozes gregas recebe texto monotónico (sem diacríticos
+  antigos); espeak-ng grc aceita texto polítonico directamente.
+
 CLI:
   python3 pronunciar_latim.py "Arma virumque cano"
   python3 pronunciar_latim.py "Gloria in excelsis" --ecl
   python3 pronunciar_latim.py "amor" --ipa
   python3 pronunciar_latim.py "Gallia est omnis" --voz it-IT-IsabellaNeural
+  python3 pronunciar_latim.py "Ἄνδρα μοι ἔννεπε" --voz grc
+  python3 pronunciar_latim.py "Ἄνδρα μοι ἔννεπε" --voz el-GR-NestorasNeural
 """
 
 import re
+import unicodedata
 import subprocess
 import signal
 import os
@@ -43,19 +56,30 @@ _proc_audio: subprocess.Popen | None = None
 # ── vozes disponíveis ─────────────────────────────────────────────────────────
 
 VOZES = [
-    # (id, rótulo, motor, locale)
-    ("it-IT-DiegoNeural",    "Diego (italiano masc.) — online",    "edge", "it"),
-    ("it-IT-IsabellaNeural", "Isabella (italiano fem.) — online",  "edge", "it"),
-    ("es-ES-AlvaroNeural",   "Álvaro (espanhol masc.) — online",   "edge", "es"),
-    ("es-ES-ElviraNeural",   "Elvira (espanhol fem.) — online",    "edge", "es"),
-    ("pt-BR-AntonioNeural",  "Antônio (port. bras. masc.) — online","edge","pt"),
-    ("pt-BR-FranciscaNeural","Francisca (port. bras. fem.) — online","edge","pt"),
-    ("la",                   "espeak-ng latim (offline)",           "espeak","la"),
-    ("it",                   "espeak-ng italiano (offline)",        "espeak","it"),
+    # (id, rótulo, motor, grupo_lingua)
+    # ── latim ──────────────────────────────────────────────────────────────────
+    ("it-IT-DiegoNeural",    "Diego (italiano masc.) — online",       "edge",   "la"),
+    ("it-IT-IsabellaNeural", "Isabella (italiano fem.) — online",     "edge",   "la"),
+    ("es-ES-AlvaroNeural",   "Álvaro (espanhol masc.) — online",      "edge",   "la"),
+    ("es-ES-ElviraNeural",   "Elvira (espanhol fem.) — online",       "edge",   "la"),
+    ("pt-BR-AntonioNeural",  "Antônio (port. bras. masc.) — online",  "edge",   "la"),
+    ("pt-BR-FranciscaNeural","Francisca (port. bras. fem.) — online", "edge",   "la"),
+    ("la",                   "espeak-ng latim (offline)",              "espeak", "la"),
+    ("it",                   "espeak-ng italiano (offline)",           "espeak", "la"),
+    # ── grego ──────────────────────────────────────────────────────────────────
+    ("grc",                  "espeak-ng grego antigo (offline)",      "espeak", "grc"),
+    ("el-GR-NestorasNeural", "Nestoras (grego mod. masc.) — online",  "edge",   "grc"),
+    ("el-GR-AthinaNeural",   "Athina (grego mod. fem.) — online",     "edge",   "grc"),
+    ("el",                   "espeak-ng grego moderno (offline)",      "espeak", "grc"),
 ]
 
-VOZES_DEFAULT_CLASSICO    = "it-IT-DiegoNeural"
+# grupos para filtrar na GUI
+VOZES_LATIM = [v for v in VOZES if v[3] == "la"]
+VOZES_GREGO = [v for v in VOZES if v[3] == "grc"]
+
+VOZES_DEFAULT_CLASSICO     = "it-IT-DiegoNeural"
 VOZES_DEFAULT_ECLESIASTICO = "it-IT-IsabellaNeural"
+VOZES_DEFAULT_GREGO        = "grc"
 
 
 # ── pré-processamento eclesiástico ────────────────────────────────────────────
@@ -85,7 +109,27 @@ def _eclesiastico(texto: str) -> str:
     return t
 
 
-# ── IPA (espeak-ng, clássico) ─────────────────────────────────────────────────
+# ── pré-processamento grego ───────────────────────────────────────────────────
+
+def _para_monotono(texto: str) -> str:
+    """
+    Converte texto grego polítonico para monotónico (sem espíritos, sem acentos
+    adicionais), de modo a ser aceite por vozes de grego moderno (edge-tts).
+    Usa decomposição NFD para separar diacríticos e remove todos os combining
+    marks do bloco Unicode «Combining Diacritical Marks» e «Greek Extended».
+    """
+    norm = unicodedata.normalize('NFD', texto)
+    resultado = []
+    for ch in norm:
+        cat = unicodedata.category(ch)
+        # Remove todo o tipo de combining mark (Mn = Mark, Nonspacing; Mc, Me)
+        if cat.startswith('M'):
+            continue
+        resultado.append(ch)
+    return unicodedata.normalize('NFC', ''.join(resultado))
+
+
+# ── IPA ───────────────────────────────────────────────────────────────────────
 
 def ipa_classico(texto: str) -> str:
     """Transcrição IPA da pronúncia latina clássica (via espeak-ng)."""
@@ -93,6 +137,17 @@ def ipa_classico(texto: str) -> str:
         return "[espeak-ng não encontrado]"
     resultado = subprocess.run(
         [_ESPEAK, '-v', 'la', '--ipa', '-q'],
+        input=texto, capture_output=True, text=True
+    )
+    return resultado.stdout.strip()
+
+
+def ipa_grego(texto: str) -> str:
+    """Transcrição IPA do grego antigo reconstituído (via espeak-ng grc)."""
+    if not _ESPEAK:
+        return "[espeak-ng não encontrado]"
+    resultado = subprocess.run(
+        [_ESPEAK, '-v', 'grc', '--ipa', '-q'],
         input=texto, capture_output=True, text=True
     )
     return resultado.stdout.strip()
@@ -129,26 +184,34 @@ def pronunciar(texto: str,
                velocidade: int = 0,
                tom: int        = 0) -> None:
     """
-    Reproduz o texto latino com o motor e voz indicados.
+    Reproduz texto latino ou grego com o motor e voz indicados.
 
     Parâmetros
     ----------
-    texto      : texto a pronunciar
+    texto      : texto a pronunciar (latim ou grego polítonico)
     voz        : id da voz (ver VOZES)
-    variante   : 'classico' | 'eclesiastico'
+    variante   : 'classico' | 'eclesiastico'  (só relevante para latim)
     velocidade : ajuste de velocidade em % relativa (-50 a +50); 0 = padrão
     tom        : apenas para espeak-ng (0-99)
     """
     global _proc_tts, _proc_audio
     parar()
 
-    if variante == 'eclesiastico':
+    # determina o motor e grupo de língua
+    voz_info  = next((v for v in VOZES if v[0] == voz), None)
+    motor     = voz_info[2] if voz_info else "edge"
+    grupo_ling = voz_info[3] if voz_info else "la"
+
+    if grupo_ling == "grc":
+        # Grego: espeak-ng grc aceita polítonico; edge-tts precisa de monotónico
+        if motor == "edge":
+            texto_proc = _para_monotono(texto)
+        else:
+            texto_proc = texto   # espeak-ng grc lida com polítonico directamente
+    elif variante == 'eclesiastico':
         texto_proc = _eclesiastico(texto)
     else:
         texto_proc = texto
-
-    # determina o motor
-    motor = next((v[2] for v in VOZES if v[0] == voz), "edge")
 
     if motor == "espeak":
         # espeak-ng: offline

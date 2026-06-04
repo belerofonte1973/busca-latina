@@ -40,10 +40,14 @@ except ImportError:
     _OLLAMA_OK = False
 
 try:
-    from pronunciar_latim import pronunciar, parar, ipa_classico, esta_a_falar, VOZES
+    from pronunciar_latim import (pronunciar, parar, ipa_classico, ipa_grego,
+                                   esta_a_falar, VOZES,
+                                   VOZES_LATIM, VOZES_GREGO,
+                                   VOZES_DEFAULT_GREGO)
     _PRONUNCIA_OK = True
 except ImportError:
-    VOZES = []
+    VOZES = VOZES_LATIM = VOZES_GREGO = []
+    VOZES_DEFAULT_GREGO = "grc"
     _PRONUNCIA_OK = False
 
 try:
@@ -488,6 +492,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
     texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
     traduzir_pedido  = pyqtSignal(str)   # texto a traduzir directamente (sem escala)
+    pronunciar_pedido = pyqtSignal(str)  # texto a pronunciar directamente
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -596,6 +601,14 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.btn_traduzir.clicked.connect(self._on_traduzir)
         btn_row.addWidget(self.btn_traduzir)
 
+        self.btn_pronunciar = QPushButton("🔊 Pronunciar")
+        self.btn_pronunciar.setEnabled(False)
+        self.btn_pronunciar.setToolTip(
+            "Pronuncia o texto seleccionado (ou toda a passagem)"
+        )
+        self.btn_pronunciar.clicked.connect(self._on_pronunciar_online)
+        btn_row.addWidget(self.btn_pronunciar)
+
         self.btn_enviar = QPushButton("Enviar para tradução →")
         self.btn_enviar.setEnabled(False)
         self.btn_enviar.setToolTip(
@@ -640,6 +653,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.combo_refs.clear()
         self.btn_carregar.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
+        self.btn_pronunciar.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
@@ -678,6 +692,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_carregar.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
+        self.btn_pronunciar.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self._carregar_catalogo()
@@ -743,6 +758,7 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.btn_carregar.setEnabled(True)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
+        self.btn_pronunciar.setEnabled(tem)
         self.btn_enviar.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
@@ -763,6 +779,11 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         texto = self._texto_activo()
         if texto:
             self.traduzir_pedido.emit(texto)
+
+    def _on_pronunciar_online(self):
+        texto = self._texto_activo()
+        if texto:
+            self.pronunciar_pedido.emit(texto)
 
     def _enviar_para_traducao(self):
         texto = self.texto_passagem.toPlainText().strip()
@@ -1079,16 +1100,16 @@ class BuscaLatina(QMainWindow):
         pron_row.addWidget(QLabel("Voz:"))
         self.combo_voz = QComboBox()
         self.combo_voz.setMinimumWidth(230)
-        for vid, rotulo, *_ in VOZES:
+        for vid, rotulo, *_ in VOZES_LATIM or VOZES:
             self.combo_voz.addItem(rotulo, vid)
         self.combo_voz.currentIndexChanged.connect(self._salvar_settings)
         pron_row.addWidget(self.combo_voz)
 
         pron_row.addWidget(self._sep())
 
-        pron_grp = QGroupBox("Variante")
-        pron_grp.setFlat(True)
-        pg_lay = QHBoxLayout(pron_grp)
+        self.pron_grp = QGroupBox("Variante")
+        self.pron_grp.setFlat(True)
+        pg_lay = QHBoxLayout(self.pron_grp)
         pg_lay.setContentsMargins(0, 0, 0, 0)
         pg_lay.setSpacing(6)
         self.bg_pron = QButtonGroup(self)
@@ -1098,7 +1119,10 @@ class BuscaLatina(QMainWindow):
             pg_lay.addWidget(rb)
         self.bg_pron.button(0).setChecked(True)
         self.bg_pron.buttonClicked.connect(self._salvar_settings)
-        pron_row.addWidget(pron_grp)
+        pron_row.addWidget(self.pron_grp)
+
+        # conecta mudança de língua para actualizar vozes disponíveis
+        self.combo_lingua.currentIndexChanged.connect(self._on_lingua_pron_mudada)
 
         pron_row.addWidget(self._sep())
 
@@ -1167,6 +1191,9 @@ class BuscaLatina(QMainWindow):
             )
             self._perseus_dialog.traduzir_pedido.connect(
                 self._traduzir_texto_online
+            )
+            self._perseus_dialog.pronunciar_pedido.connect(
+                self._lancar_pronuncia
             )
         self._perseus_dialog.show()
         self._perseus_dialog.raise_()
@@ -1606,6 +1633,60 @@ class BuscaLatina(QMainWindow):
     def _voz_selecionada(self) -> str:
         return self.combo_voz.currentData() or "it-IT-DiegoNeural"
 
+    def _on_lingua_pron_mudada(self):
+        """Actualiza o combo de vozes e os rótulos de variante conforme a língua."""
+        e_grego = self.combo_lingua.currentIndex() == 1  # 0=Latim, 1=Grego Antigo
+        voz_actual = self.combo_voz.currentData()
+
+        vozes_filtradas = (VOZES_GREGO if e_grego else VOZES_LATIM) or VOZES
+        self.combo_voz.blockSignals(True)
+        self.combo_voz.clear()
+        idx_default = 0
+        for i, (vid, rotulo, *_) in enumerate(vozes_filtradas):
+            self.combo_voz.addItem(rotulo, vid)
+            if vid == voz_actual:
+                idx_default = i
+        self.combo_voz.setCurrentIndex(idx_default)
+        self.combo_voz.blockSignals(False)
+
+        # Actualiza rótulos da variante e selecciona voz por omissão adequada
+        btn_0 = self.bg_pron.button(0)
+        btn_1 = self.bg_pron.button(1)
+        if e_grego:
+            btn_0.setText("Reconstituído")
+            btn_1.setText("Moderno (el)")
+            self.pron_grp.setTitle("Pronúncia")
+            # Liga os botões de pronúncia grega à troca automática de voz
+            btn_0.clicked.connect(self._on_pron_grega_reconstituida)
+            btn_1.clicked.connect(self._on_pron_grega_moderna)
+            # Começa em "Reconstituído" com espeak grc
+            btn_0.setChecked(True)
+            self._on_pron_grega_reconstituida()
+        else:
+            # Desliga os handlers gregos ao mudar de volta para latim
+            try:
+                btn_0.clicked.disconnect(self._on_pron_grega_reconstituida)
+                btn_1.clicked.disconnect(self._on_pron_grega_moderna)
+            except RuntimeError:
+                pass
+            btn_0.setText("Clássico")
+            btn_1.setText("Eclesiástico")
+            self.pron_grp.setTitle("Variante")
+
+    def _on_pron_grega_reconstituida(self):
+        """Selecciona espeak-ng grc (pronúncia reconstituída)."""
+        for i in range(self.combo_voz.count()):
+            if self.combo_voz.itemData(i) == "grc":
+                self.combo_voz.setCurrentIndex(i)
+                return
+
+    def _on_pron_grega_moderna(self):
+        """Selecciona Nestoras (el-GR) para pronúncia de grego moderno."""
+        for i in range(self.combo_voz.count()):
+            if self.combo_voz.itemData(i) == "el-GR-NestorasNeural":
+                self.combo_voz.setCurrentIndex(i)
+                return
+
     def _on_pronunciar(self):
         if not _PRONUNCIA_OK:
             return
@@ -1663,8 +1744,12 @@ class BuscaLatina(QMainWindow):
         texto = self._texto_para_pronunciar()
         if not texto:
             return
-        ipa = ipa_classico(texto[:300])
-        self.trans_out.setPlainText(f"IPA (clássico):\n{ipa}")
+        if self.combo_lingua.currentIndex() == 1:   # Grego Antigo
+            ipa = ipa_grego(texto[:300])
+            self.trans_out.setPlainText(f"IPA (grego antigo reconstituído):\n{ipa}")
+        else:
+            ipa = ipa_classico(texto[:300])
+            self.trans_out.setPlainText(f"IPA (clássico):\n{ipa}")
 
     # ── tradução e dicionário ─────────────────────────────────────────────────
 
