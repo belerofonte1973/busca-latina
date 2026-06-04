@@ -512,7 +512,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
     texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
     traduzir_pedido  = pyqtSignal(str)   # texto a traduzir directamente (sem escala)
-    pronunciar_pedido = pyqtSignal(str, str)  # (texto, lingua: "grc"|"lat")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -621,14 +620,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.btn_traduzir.clicked.connect(self._on_traduzir)
         btn_row.addWidget(self.btn_traduzir)
 
-        self.btn_pronunciar = QPushButton("🔊 Pronunciar")
-        self.btn_pronunciar.setEnabled(False)
-        self.btn_pronunciar.setToolTip(
-            "Pronuncia o texto seleccionado (ou toda a passagem)"
-        )
-        self.btn_pronunciar.clicked.connect(self._on_pronunciar_online)
-        btn_row.addWidget(self.btn_pronunciar)
-
         self.btn_enviar = QPushButton("Enviar para tradução →")
         self.btn_enviar.setEnabled(False)
         self.btn_enviar.setToolTip(
@@ -673,7 +664,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.combo_refs.clear()
         self.btn_carregar.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
-        self.btn_pronunciar.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
@@ -712,7 +702,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_carregar.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
-        self.btn_pronunciar.setEnabled(False)
         self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self._carregar_catalogo()
@@ -778,7 +767,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         self.btn_carregar.setEnabled(True)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
-        self.btn_pronunciar.setEnabled(tem)
         self.btn_enviar.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
@@ -799,12 +787,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
         texto = self._texto_activo()
         if texto:
             self.traduzir_pedido.emit(texto)
-
-    def _on_pronunciar_online(self):
-        texto = self._texto_activo()
-        if texto:
-            lingua = self._lingua()          # "grc" ou "lat"
-            self.pronunciar_pedido.emit(texto, lingua)
 
     def _enviar_para_traducao(self):
         texto = self.texto_passagem.toPlainText().strip()
@@ -1213,9 +1195,6 @@ class BuscaLatina(QMainWindow):
             self._perseus_dialog.traduzir_pedido.connect(
                 self._traduzir_texto_online
             )
-            self._perseus_dialog.pronunciar_pedido.connect(
-                self._pronunciar_texto_online
-            )
             self._perseus_dialog.texto_passagem.selectionChanged.connect(
                 self._on_selecao_dialog_mudada
             )
@@ -1245,31 +1224,6 @@ class BuscaLatina(QMainWindow):
         sel = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
         if sel:
             self._sincronizar_lingua(sel)
-
-    def _pronunciar_texto_online(self, texto: str, lingua: str):
-        """
-        Pronuncia texto da janela Textos Online usando sempre voz neural (edge-tts).
-        Sincroniza combo_lingua e, se a voz activa for espeak-ng, substitui
-        pela primeira voz neural disponível para essa língua.
-        """
-        if not _PRONUNCIA_OK:
-            return
-        idx_pretendido = 1 if lingua == "grc" else 0
-        if self.combo_lingua.currentIndex() != idx_pretendido:
-            self.combo_lingua.setCurrentIndex(idx_pretendido)   # → _on_lingua_pron_mudada
-
-        # Garante voz neural: se a voz seleccionada for espeak-ng, troca
-        vozes_ref = VOZES_GREGO if lingua == "grc" else VOZES_LATIM
-        voz_atual = self._voz_selecionada()
-        motor     = next((v[2] for v in vozes_ref if v[0] == voz_atual), "espeak")
-        if motor == "espeak":
-            voz_neural = next((v[0] for v in vozes_ref if v[2] == "edge"), None)
-            if voz_neural:
-                for i in range(self.combo_voz.count()):
-                    if self.combo_voz.itemData(i) == voz_neural:
-                        self.combo_voz.setCurrentIndex(i)
-                        break
-        self._lancar_pronuncia(texto)
 
     # ── busca ─────────────────────────────────────────────────────────────────
 
