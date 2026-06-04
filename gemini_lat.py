@@ -102,7 +102,7 @@ def traduzir_stream(texto: str,
     url = f"{_BASE}/{modelo}:streamGenerateContent?key={key}&alt=sse"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 8192},
+        "generationConfig": {"maxOutputTokens": 65536},
     }
 
     _MAX_RETRIES = 4

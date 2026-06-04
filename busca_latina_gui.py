@@ -1184,8 +1184,8 @@ class BuscaLatina(QMainWindow):
 
     def _traduzir_texto_online(self, texto: str):
         """Traduz directamente o texto recebido da janela Textos Online."""
-        self._selecao_salva = texto
-        self._on_gemini_traduzir()
+        self._selecao_salva = texto   # actualiza para outros usos (pronúncia, etc.)
+        self._lancar_gemini(texto)
 
     # ── busca ─────────────────────────────────────────────────────────────────
 
@@ -1378,6 +1378,19 @@ class BuscaLatina(QMainWindow):
                 "⚠ Nenhum texto seleccionado.\n"
                 "Seleccione texto no painel de resultados e clique novamente."
             )
+            return
+        self._lancar_gemini(texto)
+
+    def _lancar_gemini(self, texto: str):
+        """Lança a tradução Gemini para o texto fornecido directamente."""
+        if not _GEMINI_OK:
+            self.trans_out.setPlainText("⚠ gemini_lat.py não encontrado.")
+            return
+        chave = gemini_obter_chave()
+        if not chave:
+            QMessageBox.warning(self, "Chave API em falta",
+                                "Configure a chave Gemini clicando no botão 🔑 ao lado.\n"
+                                "Obtenha gratuitamente em aistudio.google.com")
             return
         modelo = self.combo_gemini_modelo.currentData() or GEMINI_DEFAULT
         lingua = self._lingua_ollama()
@@ -1763,6 +1776,14 @@ class BuscaLatina(QMainWindow):
 
     def _cache_guardar(self, texto: str, lingua: str, modelo: str, traducao: str):
         if not traducao.strip():
+            return
+        # Não guardar erros de API nem traduções claramente truncadas
+        marcadores_erro = ("[Chave API", "[Quota", "[Sem ligação", "[Erro", "[Limite")
+        trad_limpa = traducao.strip()
+        if any(trad_limpa.endswith(m.rstrip("]") + "]") or m in trad_limpa
+               for m in marcadores_erro):
+            return
+        if len(texto) > 300 and len(trad_limpa) < len(texto) * 0.15:
             return
         chave = self._cache_chave(texto, lingua, modelo)
         self._cache[chave] = {
