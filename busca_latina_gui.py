@@ -777,6 +777,8 @@ class PerseusOnlineWidget(QWidget):
         self.lbl_pass_status.setText(
             f"✓ {len(refs)} referências." if refs else "Sem referências."
         )
+        if tem_refs:
+            self._carregar_passagem()
 
     def _on_refs_erro(self, msg: str):
         self.combo_refs.clear()
