@@ -385,14 +385,15 @@ function percSelectWork(obra) {
       setPercBtn('btn-perc-obra', has);
       document.getElementById('perc-pass-status').textContent =
         has ? `✓ ${refs.length} referências.` : 'Sem referências.';
+      if (has) percLoadPassagem(refs[0]);  // carrega a primeira passagem automaticamente
     })
     .catch(err => {
       document.getElementById('perc-pass-status').textContent = `⚠ Refs: ${err.message}`;
     });
 }
 
-function percLoadPassagem() {
-  const urn = document.getElementById('perc-refs').value;
+function percLoadPassagem(urnOverride) {
+  const urn = urnOverride || document.getElementById('perc-refs').value;
   if (!urn) return;
   const txt = document.getElementById('perc-texto');
   txt.textContent = '⏳ A carregar…';
