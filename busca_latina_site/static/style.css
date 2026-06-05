@@ -402,6 +402,16 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 }
 .perc-footer a { color: var(--accent); }
 
+/* ── hebraico RTL ──────────────────────────────────────────────────────────── */
+.perc-texto.rtl {
+  direction: rtl;
+  text-align: right;
+  font-family: 'Ezra SIL', 'SBL Hebrew', 'Noto Serif Hebrew', 'David', 'Times New Roman', serif;
+  font-size: 14px;
+  line-height: 2;
+  unicode-bidi: plaintext;
+}
+
 /* ── status bar ────────────────────────────────────────────────────────────── */
 footer#status-bar {
   background: var(--bg2);

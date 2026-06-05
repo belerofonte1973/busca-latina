@@ -93,6 +93,18 @@ try:
 except ImportError:
     _PERSEUS_API_OK = False
 
+try:
+    import sefaria_api as _sapi
+    _SEFARIA_OK = True
+except ImportError:
+    _SEFARIA_OK = False
+
+try:
+    import apibible_api as _abapi
+    _APIBIBLE_OK = True
+except ImportError:
+    _APIBIBLE_OK = False
+
 LATIN_LIB  = Path.home() / "cltk_data/lat/text/lat_text_latin_library"
 PERSEUS    = Path.home() / "cltk_data/lat/text/lat_text_perseus"
 OGL_GREGO  = Path.home() / "cltk_data/grc/text/first1kgreek"
@@ -531,13 +543,106 @@ class PercObraCompletaThread(QThread):
             self.erro.emit(str(e))
 
 
+class SefariaCatalogThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, categoria: str, forcar: bool = False):
+        super().__init__()
+        self.categoria = categoria
+        self.forcar    = forcar
+
+    def run(self):
+        try:
+            self.pronto.emit(_sapi.obter_catalogo(self.categoria, forcar=self.forcar))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class SefariaRefsThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, titulo: str):
+        super().__init__()
+        self.titulo = titulo
+
+    def run(self):
+        try:
+            self.pronto.emit(_sapi.obter_refs(self.titulo))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class SefariaPassThread(QThread):
+    pronto = pyqtSignal(dict)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, ref: str):
+        super().__init__()
+        self.ref = ref
+
+    def run(self):
+        try:
+            self.pronto.emit(_sapi.obter_passagem(self.ref))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class ApibibleLivrosThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, biblia_id: str):
+        super().__init__()
+        self.biblia_id = biblia_id
+
+    def run(self):
+        try:
+            self.pronto.emit(_abapi.listar_livros(self.biblia_id))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class ApibibleCapsThread(QThread):
+    pronto = pyqtSignal(list)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, biblia_id: str, livro_id: str):
+        super().__init__()
+        self.biblia_id = biblia_id
+        self.livro_id  = livro_id
+
+    def run(self):
+        try:
+            self.pronto.emit(_abapi.listar_capitulos(self.biblia_id, self.livro_id))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class ApibiblePassThread(QThread):
+    pronto = pyqtSignal(dict)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, biblia_id: str, passagem_id: str):
+        super().__init__()
+        self.biblia_id   = biblia_id
+        self.passagem_id = passagem_id
+
+    def run(self):
+        try:
+            self.pronto.emit(_abapi.obter_passagem(self.biblia_id, self.passagem_id))
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
 # ── diálogo Perseus Online ────────────────────────────────────────────────────
 
 class PerseusOnlineWidget(QWidget):
-    """Navegador de textos gregos e latinos do Perseus Project (CTS API)."""
+    """Navegador de textos online: Perseus (grc/lat), Sefaria (heb), API.Bible (heb)."""
 
-    texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
-    traduzir_pedido  = pyqtSignal(str)   # texto a traduzir directamente (sem escala)
+    texto_enviado    = pyqtSignal(str)
+    traduzir_pedido  = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -548,6 +653,10 @@ class PerseusOnlineWidget(QWidget):
         self._obra_completa_thr = None
         self._edicao_urn_sel = ""
         self._refs    = []
+        # Sefaria / API.Bible state
+        self._sefaria_titulo  = ""
+        self._apibible_livro  = ""
+        self._apibible_biblia = ""
         self._build()
 
     # ── construção da UI ──────────────────────────────────────────────────────
@@ -555,13 +664,6 @@ class PerseusOnlineWidget(QWidget):
     def _build(self):
         root = QVBoxLayout(self)
         root.setSpacing(6)
-
-        # cabeçalho
-        tit = QLabel(
-            "<b>Perseus Project — CTS API</b>  "
-            "<small>(cts.perseids.org · acesso livre · textos gregos e latinos)</small>"
-        )
-        root.addWidget(tit)
 
         # splitter principal
         split = QSplitter(Qt.Horizontal)
@@ -572,21 +674,39 @@ class PerseusOnlineWidget(QWidget):
         ll.setContentsMargins(0, 0, 4, 0)
         ll.setSpacing(4)
 
-        # língua
-        lang_row = QHBoxLayout()
-        lang_row.addWidget(QLabel("Língua:"))
+        # linha de fonte + língua/categoria
+        fonte_row = QHBoxLayout()
+        fonte_row.addWidget(QLabel("Fonte:"))
+        self.combo_fonte = QComboBox()
+        if _PERSEUS_API_OK:
+            self.combo_fonte.addItem("Perseus (grc/lat)", "perseus")
+        if _SEFARIA_OK:
+            self.combo_fonte.addItem("🕎 Sefaria (heb)", "sefaria")
+        if _APIBIBLE_OK:
+            self.combo_fonte.addItem("📖 API.Bible (heb)", "apibible")
+        self.combo_fonte.currentIndexChanged.connect(self._on_fonte_mudada)
+        fonte_row.addWidget(self.combo_fonte)
+
         self.combo_lingua = QComboBox()
         self.combo_lingua.addItem("Grego (grc)", "grc")
         self.combo_lingua.addItem("Latim (lat)", "lat")
         self.combo_lingua.currentIndexChanged.connect(self._on_lingua_mudada)
-        lang_row.addWidget(self.combo_lingua)
-        lang_row.addStretch()
+        fonte_row.addWidget(self.combo_lingua)
+
+        self.combo_cat_sefaria = QComboBox()
+        for cat in ["Tanakh", "Talmud", "Midrash", "Halakhah", "Liturgy", "Jewish Thought"]:
+            self.combo_cat_sefaria.addItem(cat, cat)
+        self.combo_cat_sefaria.currentIndexChanged.connect(self._on_cat_sefaria_mudada)
+        self.combo_cat_sefaria.hide()
+        fonte_row.addWidget(self.combo_cat_sefaria)
+
+        fonte_row.addStretch()
         self.btn_reload = QPushButton("⟳")
         self.btn_reload.setFixedWidth(32)
-        self.btn_reload.setToolTip("Forçar actualização do catálogo (ignora cache)")
+        self.btn_reload.setToolTip("Forçar actualização do catálogo")
         self.btn_reload.clicked.connect(self._carregar_catalogo_forcar)
-        lang_row.addWidget(self.btn_reload)
-        ll.addLayout(lang_row)
+        fonte_row.addWidget(self.btn_reload)
+        ll.addLayout(fonte_row)
 
         # filtro
         self.filtro = QLineEdit()
@@ -677,17 +797,34 @@ class PerseusOnlineWidget(QWidget):
 
     # ── catálogo ──────────────────────────────────────────────────────────────
 
+    def _fonte(self) -> str:
+        return self.combo_fonte.currentData() or "perseus"
+
     def _lingua(self) -> str:
         return self.combo_lingua.currentData()
 
-    def _carregar_catalogo(self, forcar: bool = False):
+    def _reset_leitor(self):
         self.lista_obras.clear()
         self.combo_refs.clear()
+        self.texto_passagem.clear()
+        self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_copiar.setEnabled(False)
-        self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
-        self._cat_thr = PercCatalogThread(self._lingua(), forcar)
+
+    def _carregar_catalogo(self, forcar: bool = False):
+        self._reset_leitor()
+        fonte = self._fonte()
+        if fonte == "perseus":
+            self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
+            self._cat_thr = PercCatalogThread(self._lingua(), forcar)
+        elif fonte == "sefaria":
+            cat = self.combo_cat_sefaria.currentData() or "Tanakh"
+            self.lbl_cat_status.setText(f"⏳ A carregar catálogo Sefaria ({cat})…")
+            self._cat_thr = SefariaCatalogThread(cat, forcar)
+        else:
+            self.lbl_cat_status.setText("⚠ API.Bible: configure chave e selecione versão.")
+            return
         self._cat_thr.pronto.connect(self._on_catalogo_pronto)
         self._cat_thr.erro.connect(self._on_catalogo_erro)
         self._cat_thr.start()
@@ -698,8 +835,7 @@ class PerseusOnlineWidget(QWidget):
     def _on_catalogo_pronto(self, obras: list):
         self._obras = obras
         self._filtrar(self.filtro.text())
-        n = len(obras)
-        self.lbl_cat_status.setText(f"✓ {n} edições disponíveis.")
+        self.lbl_cat_status.setText(f"✓ {len(obras)} obras disponíveis.")
 
     def _on_catalogo_erro(self, msg: str):
         self.lbl_cat_status.setText(f"⚠ Erro: {msg}")
@@ -713,6 +849,20 @@ class PerseusOnlineWidget(QWidget):
                 item.setData(Qt.UserRole, o)
                 self.lista_obras.addItem(item)
 
+    def _on_fonte_mudada(self):
+        fonte = self._fonte()
+        self.combo_lingua.setVisible(fonte == "perseus")
+        self.combo_cat_sefaria.setVisible(fonte == "sefaria")
+        # RTL para hebraico
+        from PyQt5.QtCore import Qt as _Qt
+        self.texto_passagem.setLayoutDirection(
+            _Qt.RightToLeft if fonte != "perseus" else _Qt.LeftToRight
+        )
+        self.filtro.clear()
+        self._obras = []
+        self._refs  = []
+        self._carregar_catalogo()
+
     def _on_lingua_mudada(self):
         self.filtro.clear()
         self._obras = []
@@ -725,6 +875,9 @@ class PerseusOnlineWidget(QWidget):
         self.btn_copiar.setEnabled(False)
         self._carregar_catalogo()
 
+    def _on_cat_sefaria_mudada(self):
+        self._on_lingua_mudada()  # mesmo comportamento: recarregar catálogo
+
     # ── obra selecionada → carregar referências ───────────────────────────────
 
     def _on_obra_sel(self, row: int):
@@ -734,19 +887,36 @@ class PerseusOnlineWidget(QWidget):
         obra = item.data(Qt.UserRole)
         if not obra:
             return
-        self._edicao_urn_sel = obra["edicao_urn"]
-        self.lbl_obra_sel.setText(
-            f"<b>{obra['display']}</b><br>"
-            f"<small>{obra['edicao_urn']}</small>"
-        )
+
         self.combo_refs.clear()
         self.combo_refs.addItem("(a carregar…)", "")
         self.lbl_pass_status.setText("A carregar referências…")
 
-        self._refs_thr = PercRefsThread(obra["edicao_urn"])
-        self._refs_thr.pronto.connect(self._on_refs_prontas)
-        self._refs_thr.erro.connect(self._on_refs_erro)
-        self._refs_thr.start()
+        fonte = self._fonte()
+        if fonte == "sefaria":
+            self._sefaria_titulo = obra["titulo"]
+            self.lbl_obra_sel.setText(f"<b>{obra['display']}</b>")
+            self._refs_thr = SefariaRefsThread(obra["titulo"])
+            self._refs_thr.pronto.connect(self._on_sefaria_refs_prontas)
+            self._refs_thr.erro.connect(self._on_refs_erro)
+            self._refs_thr.start()
+        elif fonte == "apibible":
+            self._apibible_livro = obra.get("id", "")
+            self.lbl_obra_sel.setText(f"<b>{obra['display']}</b>")
+            self._refs_thr = ApibibleCapsThread(self._apibible_biblia, self._apibible_livro)
+            self._refs_thr.pronto.connect(self._on_apibible_caps_prontas)
+            self._refs_thr.erro.connect(self._on_refs_erro)
+            self._refs_thr.start()
+        else:
+            self._edicao_urn_sel = obra["edicao_urn"]
+            self.lbl_obra_sel.setText(
+                f"<b>{obra['display']}</b><br>"
+                f"<small>{obra['edicao_urn']}</small>"
+            )
+            self._refs_thr = PercRefsThread(obra["edicao_urn"])
+            self._refs_thr.pronto.connect(self._on_refs_prontas)
+            self._refs_thr.erro.connect(self._on_refs_erro)
+            self._refs_thr.start()
 
     def _on_refs_prontas(self, refs: list):
         self._refs = refs
@@ -767,21 +937,80 @@ class PerseusOnlineWidget(QWidget):
         self.btn_obra_completa.setEnabled(False)
         self.lbl_pass_status.setText(f"⚠ Refs: {msg}")
 
+    def _on_sefaria_refs_prontas(self, refs: list):
+        self._refs = refs
+        self.combo_refs.clear()
+        for ref in refs:
+            self.combo_refs.addItem(ref.split(" ")[-1], ref)
+        has = bool(refs)
+        self.btn_obra_completa.setEnabled(has)
+        self.lbl_pass_status.setText(f"✓ {len(refs)} capítulos." if has else "Sem capítulos.")
+        if has:
+            self._carregar_passagem()
+
+    def _on_apibible_caps_prontas(self, caps: list):
+        self._refs = [c["id"] for c in caps]
+        self.combo_refs.clear()
+        for c in caps:
+            self.combo_refs.addItem(str(c["numero"]), c["id"])
+        has = bool(caps)
+        self.lbl_pass_status.setText(f"✓ {len(caps)} capítulos." if has else "Sem capítulos.")
+        if has:
+            self._carregar_passagem()
+
     # ── carregar passagem ─────────────────────────────────────────────────────
 
     def _carregar_passagem(self):
-        urn = self.combo_refs.currentData()
-        if not urn:
-            urn = self._edicao_urn_sel
-        if not urn:
-            return
-        self.texto_passagem.setPlainText("⏳ A carregar passagem…")
-        self.lbl_pass_status.setText("A buscar…")
+        fonte = self._fonte()
+        if fonte == "sefaria":
+            ref = self.combo_refs.currentData()
+            if not ref:
+                return
+            self.texto_passagem.setPlainText("⏳ A carregar…")
+            self.lbl_pass_status.setText("A buscar…")
+            self._pass_thr = SefariaPassThread(ref)
+            self._pass_thr.pronto.connect(self._on_sefaria_passagem_pronta)
+            self._pass_thr.erro.connect(self._on_passagem_erro)
+            self._pass_thr.start()
+        elif fonte == "apibible":
+            passagem_id = self.combo_refs.currentData()
+            if not passagem_id or not self._apibible_biblia:
+                return
+            self.texto_passagem.setPlainText("⏳ A carregar…")
+            self.lbl_pass_status.setText("A buscar…")
+            self._pass_thr = ApibiblePassThread(self._apibible_biblia, passagem_id)
+            self._pass_thr.pronto.connect(self._on_apibible_passagem_pronta)
+            self._pass_thr.erro.connect(self._on_passagem_erro)
+            self._pass_thr.start()
+        else:
+            urn = self.combo_refs.currentData()
+            if not urn:
+                urn = self._edicao_urn_sel
+            if not urn:
+                return
+            self.texto_passagem.setPlainText("⏳ A carregar passagem…")
+            self.lbl_pass_status.setText("A buscar…")
+            self._pass_thr = PercPassThread(urn)
+            self._pass_thr.pronto.connect(self._on_passagem_pronta)
+            self._pass_thr.erro.connect(self._on_passagem_erro)
+            self._pass_thr.start()
 
-        self._pass_thr = PercPassThread(urn)
-        self._pass_thr.pronto.connect(self._on_passagem_pronta)
-        self._pass_thr.erro.connect(self._on_passagem_erro)
-        self._pass_thr.start()
+    def _on_sefaria_passagem_pronta(self, d: dict):
+        texto = d.get("texto_heb", "")
+        self.texto_passagem.setPlainText(texto)
+        tem = bool(texto.strip())
+        self.btn_traduzir.setEnabled(tem)
+        self.btn_copiar.setEnabled(tem)
+        ref_heb = d.get("ref_heb", d.get("ref", ""))
+        self.lbl_pass_status.setText(f"✓ {ref_heb} — {len(texto.split())} palavras.")
+
+    def _on_apibible_passagem_pronta(self, d: dict):
+        texto = d.get("texto", "")
+        self.texto_passagem.setPlainText(texto)
+        tem = bool(texto.strip())
+        self.btn_traduzir.setEnabled(tem)
+        self.btn_copiar.setEnabled(tem)
+        self.lbl_pass_status.setText(f"✓ {d.get('ref', '')} — {len(texto.split())} palavras.")
 
     def _on_passagem_pronta(self, texto: str):
         self.texto_passagem.setPlainText(texto)
@@ -841,6 +1070,12 @@ class PerseusOnlineWidget(QWidget):
         self.texto_passagem.setPlainText(f"⚠ Erro ao descarregar obra:\n{msg}")
         self.btn_obra_completa.setEnabled(True)
         self.lbl_pass_status.setText("⚠ Erro.")
+
+    def _lingua_traducao(self) -> str:
+        fonte = self._fonte()
+        if fonte != "perseus":
+            return "hbo"
+        return self.combo_lingua.currentData() or "la"
 
     def _on_traduzir(self):
         texto = self._texto_activo()

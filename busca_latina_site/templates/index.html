@@ -12,7 +12,7 @@
   <span class="logo">Busca Greco-Latina</span>
   <nav class="tabs">
     <button class="tab-btn active" data-tab="tab-busca">🔍 Busca</button>
-    {% if perseus_ok %}
+    {% if perseus_ok or sefaria_ok or apibible_ok %}
     <button class="tab-btn" data-tab="tab-online">🌐 Textos Online</button>
     {% endif %}
   </nav>
@@ -118,29 +118,61 @@
 
 
 <!-- ══════════════════════════ TAB 2: TEXTOS ONLINE ════════════════════════ -->
-{% if perseus_ok %}
+{% if perseus_ok or sefaria_ok or apibible_ok %}
 <main id="tab-online" class="tab-content">
-
-  <div class="perc-header">
-    <strong>Perseus Project — CTS API</strong>
-    <small>(cts.perseids.org · acesso livre · textos gregos e latinos)</small>
-  </div>
 
   <div class="perc-split">
 
     <!-- painel esquerdo: catálogo -->
     <div class="perc-left">
       <div class="perc-lang-row">
-        <label>Língua:
-          <select id="perc-lingua" onchange="percLoadCatalog()">
-            <option value="grc">Grego (grc)</option>
-            <option value="lat">Latim (lat)</option>
+
+        <!-- selector de fonte -->
+        <label>Fonte:
+          <select id="online-fonte" onchange="onlineFonteChange()">
+            {% if perseus_ok %}<option value="perseus">Perseus (grc/lat)</option>{% endif %}
+            {% if sefaria_ok %}<option value="sefaria">🕎 Sefaria (heb)</option>{% endif %}
+            {% if apibible_ok %}<option value="apibible">📖 API.Bible (heb)</option>{% endif %}
           </select>
         </label>
-        <button onclick="percLoadCatalog(true)" title="Forçar actualização do catálogo">⟳</button>
+
+        <!-- língua Perseus (ocultado quando não é Perseus) -->
+        <span id="perc-lingua-wrap">
+          <label>Língua:
+            <select id="perc-lingua" onchange="percLoadCatalog()">
+              <option value="grc">Grego (grc)</option>
+              <option value="lat">Latim (lat)</option>
+            </select>
+          </label>
+        </span>
+
+        <!-- categoria Sefaria -->
+        <span id="sefaria-cat-wrap" style="display:none">
+          <label>Categoria:
+            <select id="sefaria-cat" onchange="sefariaLoadCatalog()">
+              <option value="Tanakh">Tanakh</option>
+              <option value="Talmud">Talmud</option>
+              <option value="Midrash">Midrash</option>
+              <option value="Halakhah">Halachá</option>
+              <option value="Liturgy">Liturgia</option>
+              <option value="Jewish Thought">Pensamento Judaico</option>
+            </select>
+          </label>
+        </span>
+
+        <!-- API.Bible -->
+        <span id="apibible-wrap" style="display:none">
+          <label>Bíblia:
+            <select id="apibible-biblia" onchange="apibibleLoadBooks()"></select>
+          </label>
+          <button onclick="showApibibleKeyDialog()" title="Configurar chave API.Bible">🔑</button>
+        </span>
+
+        <button onclick="reloadCurrentCatalog()" title="Actualizar catálogo">⟳</button>
       </div>
+
       <input id="perc-filter" type="text" placeholder="Filtrar autor ou obra…"
-             oninput="percFilter(this.value)">
+             oninput="onlineFilter(this.value)">
       <ul id="perc-works" class="perc-works-list"></ul>
       <div id="perc-cat-status" class="perc-status">A carregar catálogo…</div>
     </div>
@@ -151,7 +183,7 @@
 
       <div class="perc-ref-row">
         <label>Referência (livro/secção):
-          <select id="perc-refs"></select>
+          <select id="perc-refs" onchange="onPercRefsChange()"></select>
         </label>
       </div>
 
@@ -159,9 +191,8 @@
            data-placeholder="Selecione uma obra à esquerda e depois uma referência acima."></div>
 
       <div class="perc-btn-row">
-        <button id="btn-perc-obra"     disabled onclick="percObraCompleta()">📥 Obra completa</button>
+        <button id="btn-perc-obra"     disabled onclick="onlineObraCompleta()">📥 Obra completa</button>
         <button id="btn-perc-traduzir" disabled onclick="percTraduzir()">🌟 Traduzir →PT</button>
-
         <button id="btn-perc-copiar"   disabled onclick="percCopiar()">Copiar texto</button>
         <span id="perc-pass-status" class="perc-status"></span>
       </div>
@@ -173,11 +204,29 @@
   </div><!-- .perc-split -->
 
   <div class="perc-footer">
-    <small>TLG (Thesaurus Linguae Graecae) requer subscrição institucional.
-    Acesso web: <a href="https://stephanus.tlg.uci.edu" target="_blank">stephanus.tlg.uci.edu</a></small>
+    <small id="perc-footer-txt">
+      {% if perseus_ok %}Perseus Project · TLG (Thesaurus Linguae Graecae) requer subscrição institucional.{% endif %}
+      {% if sefaria_ok %}Sefaria · acesso livre · <a href="https://www.sefaria.org" target="_blank">sefaria.org</a>.{% endif %}
+      {% if apibible_ok %}API.Bible · chave gratuita em <a href="https://scripture.api.bible" target="_blank">scripture.api.bible</a>.{% endif %}
+    </small>
   </div>
 
 </main><!-- #tab-online -->
+{% endif %}
+
+<!-- ── diálogo chave API.Bible ─────────────────────────────────────────────── -->
+{% if apibible_ok %}
+<div id="apibible-dialog" class="dialog-overlay" style="display:none">
+  <div class="dialog-box">
+    <h3>Chave API.Bible</h3>
+    <p>Obtenha gratuitamente em <a href="https://scripture.api.bible" target="_blank">scripture.api.bible</a></p>
+    <input id="apibible-key-input" type="password" placeholder="Insira a chave…" style="width:100%">
+    <div class="dialog-btns">
+      <button onclick="saveApibibleKey()">Guardar</button>
+      <button onclick="closeApibibleKeyDialog()">Cancelar</button>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 

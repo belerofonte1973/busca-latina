@@ -27,6 +27,18 @@ except ImportError:
     _PERSEUS_OK = False
 
 try:
+    import sefaria_api as _sapi
+    _SEFARIA_OK = True
+except ImportError:
+    _SEFARIA_OK = False
+
+try:
+    import apibible_api as _abapi
+    _APIBIBLE_OK = True
+except ImportError:
+    _APIBIBLE_OK = False
+
+try:
     from ollama_lat import traduzir_stream as _ollama_stream, comentario as _ollama_comentario, listar_modelos
     _OLLAMA_OK = True
 except ImportError:
@@ -98,6 +110,9 @@ def index():
         gemini_models=MODELOS_GEMINI,
         gemini_key_set=bool(gemini_obter_chave()) if _GEMINI_OK else False,
         perseus_ok=_PERSEUS_OK,
+        sefaria_ok=_SEFARIA_OK,
+        apibible_ok=_APIBIBLE_OK,
+        apibible_key_set=bool(_abapi.obter_chave()) if _APIBIBLE_OK else False,
     )
 
 
@@ -337,6 +352,151 @@ def api_perseus_obra():
     return Response(stream_with_context(generate()),
                     content_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Sefaria API ────────────────────────────────────────────────────────────────
+
+@app.route("/api/sefaria/catalogo")
+def api_sefaria_catalogo():
+    if not _SEFARIA_OK:
+        return jsonify({"erro": "sefaria_api.py não disponível"})
+    categoria = request.args.get("categoria", "Tanakh")
+    forcar    = request.args.get("forcar", "0") == "1"
+    try:
+        return jsonify(_sapi.obter_catalogo(categoria, forcar=forcar))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/sefaria/refs")
+def api_sefaria_refs():
+    if not _SEFARIA_OK:
+        return jsonify({"erro": "sefaria_api.py não disponível"})
+    titulo = request.args.get("titulo", "")
+    if not titulo:
+        return jsonify({"erro": "titulo em falta"}), 400
+    try:
+        return jsonify(_sapi.obter_refs(titulo))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/sefaria/passagem")
+def api_sefaria_passagem():
+    if not _SEFARIA_OK:
+        return jsonify({"erro": "sefaria_api.py não disponível"})
+    ref = request.args.get("ref", "")
+    if not ref:
+        return jsonify({"erro": "ref em falta"}), 400
+    try:
+        return jsonify(_sapi.obter_passagem(ref))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/sefaria/obra")
+def api_sefaria_obra():
+    """SSE: descarrega obra completa capítulo a capítulo."""
+    if not _SEFARIA_OK:
+        return Response(sse("erro", {"msg": "sefaria_api.py não disponível"}),
+                        content_type="text/event-stream")
+    titulo = request.args.get("titulo", "")
+
+    def generate():
+        if not titulo:
+            yield sse("erro", {"msg": "titulo em falta"}); return
+        try:
+            refs  = _sapi.obter_refs(titulo)
+            total = len(refs)
+            yield sse("status", {"msg": f"0/{total} capítulos…"})
+            resultados = [None] * total
+            with ThreadPoolExecutor(max_workers=5) as exe:
+                futuros = {exe.submit(_sapi.obter_passagem, ref): i
+                           for i, ref in enumerate(refs)}
+                concluidos = 0
+                for fut in as_completed(futuros):
+                    i = futuros[fut]
+                    try:
+                        d = fut.result()
+                        resultados[i] = d["texto_heb"]
+                    except Exception as ex:
+                        resultados[i] = f"[Erro: {ex}]"
+                    concluidos += 1
+                    yield sse("progress", {"atual": concluidos, "total": total})
+            yield sse("done", {"texto": "\n\n".join(r for r in resultados if r)})
+        except Exception as ex:
+            yield sse("erro", {"msg": str(ex)})
+
+    return Response(stream_with_context(generate()),
+                    content_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── API.Bible ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/apibible/chave", methods=["GET", "POST"])
+def api_apibible_chave():
+    if not _APIBIBLE_OK:
+        return jsonify({"ok": False, "msg": "apibible_api.py não disponível"})
+    if request.method == "POST":
+        chave = ((request.get_json(force=True, silent=True) or {}).get("chave") or "").strip()
+        if not chave:
+            return jsonify({"ok": False, "msg": "Chave vazia"})
+        _abapi.guardar_chave(chave)
+        return jsonify({"ok": True})
+    return jsonify({"tem_chave": bool(_abapi.obter_chave())})
+
+
+@app.route("/api/apibible/biblias")
+def api_apibible_biblias():
+    if not _APIBIBLE_OK:
+        return jsonify({"erro": "apibible_api.py não disponível"})
+    forcar = request.args.get("forcar", "0") == "1"
+    try:
+        return jsonify(_abapi.listar_biblias_heb(forcar=forcar))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/apibible/livros")
+def api_apibible_livros():
+    if not _APIBIBLE_OK:
+        return jsonify({"erro": "apibible_api.py não disponível"})
+    biblia_id = request.args.get("biblia_id", "")
+    if not biblia_id:
+        return jsonify({"erro": "biblia_id em falta"}), 400
+    try:
+        return jsonify(_abapi.listar_livros(biblia_id))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/apibible/capitulos")
+def api_apibible_capitulos():
+    if not _APIBIBLE_OK:
+        return jsonify({"erro": "apibible_api.py não disponível"})
+    biblia_id = request.args.get("biblia_id", "")
+    livro_id  = request.args.get("livro_id", "")
+    if not biblia_id or not livro_id:
+        return jsonify({"erro": "biblia_id e livro_id obrigatórios"}), 400
+    try:
+        return jsonify(_abapi.listar_capitulos(biblia_id, livro_id))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
+
+
+@app.route("/api/apibible/passagem")
+def api_apibible_passagem():
+    if not _APIBIBLE_OK:
+        return jsonify({"erro": "apibible_api.py não disponível"})
+    biblia_id   = request.args.get("biblia_id", "")
+    passagem_id = request.args.get("passagem_id", "")
+    if not biblia_id or not passagem_id:
+        return jsonify({"erro": "biblia_id e passagem_id obrigatórios"}), 400
+    try:
+        return jsonify(_abapi.obter_passagem(biblia_id, passagem_id))
+    except Exception as ex:
+        return jsonify({"erro": str(ex)}), 500
 
 
 if __name__ == "__main__":

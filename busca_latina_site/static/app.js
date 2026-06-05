@@ -455,7 +455,9 @@ async function percTraduzir() {
   const texto = percGetTexto();
   if (!texto) return;
 
-  const lingua  = document.getElementById('perc-lingua').value === 'grc' ? 'grc' : 'la';
+  const fonte   = onlineFonte();
+  const lingua  = fonte !== 'perseus' ? 'hbo' :
+                  (document.getElementById('perc-lingua').value === 'grc' ? 'grc' : 'la');
   const modelo  = document.getElementById('sel-gemini-modelo').value;
   const outEl   = document.getElementById('perc-trans-output');
   outEl.style.display = 'block';
@@ -492,6 +494,355 @@ function setPercBtn(id, enabled) {
   const el = document.getElementById(id);
   if (el) el.disabled = !enabled;
 }
+
+// ── Textos Online: fonte dispatcher ──────────────────────────────────────────
+
+function onlineFonte() {
+  return document.getElementById('online-fonte')?.value || 'perseus';
+}
+
+function onlineFonteChange() {
+  const fonte = onlineFonte();
+  document.getElementById('perc-lingua-wrap').style.display  = fonte === 'perseus'  ? '' : 'none';
+  document.getElementById('sefaria-cat-wrap').style.display  = fonte === 'sefaria'  ? '' : 'none';
+  const abWrap = document.getElementById('apibible-wrap');
+  if (abWrap) abWrap.style.display = fonte === 'apibible' ? '' : 'none';
+
+  const textoEl = document.getElementById('perc-texto');
+  textoEl.classList.toggle('rtl', fonte !== 'perseus');
+
+  document.getElementById('perc-obra-sel').innerHTML = '<em>(nenhuma obra selecionada)</em>';
+  document.getElementById('perc-refs').innerHTML = '';
+  textoEl.textContent = '';
+  document.getElementById('perc-pass-status').textContent = '';
+  setPercBtn('btn-perc-obra', false);
+  setPercBtn('btn-perc-traduzir', false);
+  setPercBtn('btn-perc-copiar', false);
+
+  if (fonte === 'perseus') percLoadCatalog();
+  else if (fonte === 'sefaria') sefariaLoadCatalog();
+  else if (fonte === 'apibible') apibibleInit();
+}
+
+function reloadCurrentCatalog() {
+  const fonte = onlineFonte();
+  if (fonte === 'perseus') percLoadCatalog(true);
+  else if (fonte === 'sefaria') sefariaLoadCatalog(true);
+  else if (fonte === 'apibible') apibibleLoadBiblias(true);
+}
+
+function onlineFilter(q) {
+  const fonte = onlineFonte();
+  if (fonte === 'sefaria') sefariaFilter(q);
+  else if (fonte === 'apibible') apibibleFilter(q);
+  else percFilter(q);
+}
+
+function onPercRefsChange() {
+  const fonte = onlineFonte();
+  if (fonte === 'sefaria') sefariaLoadPassagem();
+  else if (fonte === 'apibible') apibibleLoadPassagem();
+  else percLoadPassagem();
+}
+
+function onlineObraCompleta() {
+  const fonte = onlineFonte();
+  if (fonte === 'sefaria') sefariaObraCompleta();
+  else if (fonte === 'apibible') { /* não implementado */ }
+  else percObraCompleta();
+}
+
+// ── Sefaria ───────────────────────────────────────────────────────────────────
+
+function sefariaLoadCatalog(forcar = false) {
+  const cat  = document.getElementById('sefaria-cat')?.value || 'Tanakh';
+  const list = document.getElementById('perc-works');
+  list.innerHTML = '<li class="loading">A carregar…</li>';
+  document.getElementById('perc-cat-status').textContent = '⏳ A carregar catálogo Sefaria…';
+
+  fetch(`/api/sefaria/catalogo?categoria=${enc(cat)}&forcar=${forcar ? 1 : 0}`)
+    .then(r => r.json())
+    .then(obras => {
+      if (obras.erro) throw new Error(obras.erro);
+      S.percObras = obras;
+      sefariaFilter('');
+      document.getElementById('perc-cat-status').textContent =
+        `✓ ${obras.length} obras disponíveis.`;
+    })
+    .catch(err => {
+      list.innerHTML = '';
+      document.getElementById('perc-cat-status').textContent = `⚠ Erro: ${err.message}`;
+    });
+}
+
+function sefariaFilter(q) {
+  const list = document.getElementById('perc-works');
+  list.innerHTML = '';
+  (S.percObras || [])
+    .filter(o => !q || o.display.toLowerCase().includes(q.toLowerCase()) ||
+                       o.titulo.toLowerCase().includes(q.toLowerCase()))
+    .forEach(o => {
+      const li = document.createElement('li');
+      li.textContent = o.display;
+      li.title       = o.titulo;
+      li.addEventListener('click', () => sefariaSelectWork(o));
+      list.appendChild(li);
+    });
+}
+
+function sefariaSelectWork(obra) {
+  document.querySelectorAll('.perc-works-list li').forEach(li =>
+    li.classList.toggle('active', li.title === obra.titulo));
+
+  document.getElementById('perc-obra-sel').innerHTML =
+    `<b>${esc(obra.display)}</b>`;
+
+  const refsEl = document.getElementById('perc-refs');
+  refsEl.innerHTML = '<option>(a carregar…)</option>';
+  setPercBtn('btn-perc-obra', false);
+  document.getElementById('perc-pass-status').textContent = 'A carregar capítulos…';
+
+  fetch(`/api/sefaria/refs?titulo=${enc(obra.titulo)}`)
+    .then(r => r.json())
+    .then(refs => {
+      if (refs.erro) throw new Error(refs.erro);
+      S.percRefs = refs;
+      refsEl.innerHTML = '';
+      refs.forEach(ref => {
+        const opt = document.createElement('option');
+        opt.value       = ref;
+        opt.textContent = ref.split(' ').pop();
+        refsEl.appendChild(opt);
+      });
+      const has = refs.length > 0;
+      setPercBtn('btn-perc-obra', has);
+      document.getElementById('perc-pass-status').textContent =
+        has ? `✓ ${refs.length} capítulos.` : 'Sem capítulos.';
+      if (has) sefariaLoadPassagem(refs[0]);
+    })
+    .catch(err => {
+      document.getElementById('perc-pass-status').textContent = `⚠ ${err.message}`;
+    });
+}
+
+function sefariaLoadPassagem(refOverride) {
+  const ref = refOverride || document.getElementById('perc-refs').value;
+  if (!ref) return;
+  const txt = document.getElementById('perc-texto');
+  txt.textContent = '⏳ A carregar…';
+  document.getElementById('perc-pass-status').textContent = 'A buscar…';
+
+  fetch(`/api/sefaria/passagem?ref=${enc(ref)}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.erro) throw new Error(d.erro);
+      const heb   = d.texto_heb || '';
+      const words = heb.trim().split(/\s+/).filter(Boolean).length;
+      txt.textContent = heb;
+      document.getElementById('perc-pass-status').textContent =
+        `✓ ${d.ref_heb || d.ref} — ${words} palavras.`;
+      setPercBtn('btn-perc-traduzir', !!heb);
+      setPercBtn('btn-perc-copiar',   !!heb);
+    })
+    .catch(err => {
+      txt.textContent = `⚠ Erro: ${err.message}`;
+    });
+}
+
+function sefariaObraCompleta() {
+  const obraEl = document.getElementById('perc-obra-sel');
+  const titulo = obraEl.querySelector('b')?.textContent?.match(/\(([^)]+)\)/)?.[1];
+  if (!titulo) return;
+  if (S.percObraES) S.percObraES.close();
+
+  const txt = document.getElementById('perc-texto');
+  const n   = S.percRefs.length;
+  txt.textContent = `⏳ A descarregar obra completa… 0/${n}`;
+  setPercBtn('btn-perc-obra', false);
+
+  S.percObraES = new EventSource(`/api/sefaria/obra?titulo=${enc(titulo)}`);
+  S.percObraES.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('perc-pass-status').textContent = `⏳ ${d.atual}/${d.total}…`;
+  });
+  S.percObraES.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    txt.textContent = d.texto;
+    setPercBtn('btn-perc-obra', true);
+    setPercBtn('btn-perc-traduzir', true);
+    setPercBtn('btn-perc-copiar', true);
+    const words = d.texto.trim().split(/\s+/).filter(Boolean).length;
+    document.getElementById('perc-pass-status').textContent =
+      `✓ Obra completa — ${words} palavras.`;
+    S.percObraES.close(); S.percObraES = null;
+  });
+  S.percObraES.addEventListener('erro', e => {
+    txt.textContent = `⚠ ${JSON.parse(e.data).msg}`;
+    setPercBtn('btn-perc-obra', true);
+    S.percObraES.close(); S.percObraES = null;
+  });
+}
+
+// ── API.Bible ─────────────────────────────────────────────────────────────────
+
+function apibibleInit() {
+  document.getElementById('perc-cat-status').textContent = '⏳ A carregar versões…';
+  fetch('/api/apibible/chave')
+    .then(r => r.json())
+    .then(d => {
+      if (!d.tem_chave) {
+        document.getElementById('perc-cat-status').textContent =
+          '⚠ Configure a chave API.Bible (botão 🔑).';
+        return;
+      }
+      apibibleLoadBiblias();
+    });
+}
+
+function apibibleLoadBiblias(forcar = false) {
+  document.getElementById('perc-cat-status').textContent = '⏳ A carregar Bíblias…';
+  fetch(`/api/apibible/biblias?forcar=${forcar ? 1 : 0}`)
+    .then(r => r.json())
+    .then(bibles => {
+      if (bibles.erro) throw new Error(bibles.erro);
+      const sel = document.getElementById('apibible-biblia');
+      sel.innerHTML = '';
+      bibles.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value       = b.id;
+        opt.textContent = b.nome;
+        sel.appendChild(opt);
+      });
+      if (bibles.length > 0) apibibleLoadBooks();
+      else document.getElementById('perc-cat-status').textContent = 'Sem Bíblias hebraicas.';
+    })
+    .catch(err => {
+      document.getElementById('perc-cat-status').textContent = `⚠ ${err.message}`;
+    });
+}
+
+function apibibleLoadBooks() {
+  const bibliaId = document.getElementById('apibible-biblia')?.value;
+  if (!bibliaId) return;
+  const list = document.getElementById('perc-works');
+  list.innerHTML = '<li class="loading">A carregar…</li>';
+  document.getElementById('perc-cat-status').textContent = '⏳ A carregar livros…';
+
+  fetch(`/api/apibible/livros?biblia_id=${enc(bibliaId)}`)
+    .then(r => r.json())
+    .then(livros => {
+      if (livros.erro) throw new Error(livros.erro);
+      S.percObras = livros.map(l => ({...l, display: l.nome}));
+      apibibleFilter('');
+      document.getElementById('perc-cat-status').textContent =
+        `✓ ${livros.length} livros.`;
+    })
+    .catch(err => {
+      list.innerHTML = '';
+      document.getElementById('perc-cat-status').textContent = `⚠ ${err.message}`;
+    });
+}
+
+function apibibleFilter(q) {
+  const list = document.getElementById('perc-works');
+  list.innerHTML = '';
+  (S.percObras || [])
+    .filter(o => !q || o.display.toLowerCase().includes(q.toLowerCase()))
+    .forEach(o => {
+      const li = document.createElement('li');
+      li.textContent = o.display;
+      li.addEventListener('click', () => apibibleSelectBook(o.id));
+      list.appendChild(li);
+    });
+}
+
+function apibibleSelectBook(livroId) {
+  document.querySelectorAll('.perc-works-list li').forEach(li =>
+    li.classList.toggle('active', li.textContent === (S.percObras.find(o => o.id === livroId)?.display)));
+
+  const bibliaId = document.getElementById('apibible-biblia')?.value;
+  document.getElementById('perc-obra-sel').innerHTML =
+    `<b>${esc(S.percObras.find(o => o.id === livroId)?.nome || livroId)}</b>`;
+
+  const refsEl = document.getElementById('perc-refs');
+  refsEl.innerHTML = '<option>(a carregar…)</option>';
+  document.getElementById('perc-pass-status').textContent = 'A carregar capítulos…';
+
+  fetch(`/api/apibible/capitulos?biblia_id=${enc(bibliaId)}&livro_id=${enc(livroId)}`)
+    .then(r => r.json())
+    .then(caps => {
+      if (caps.erro) throw new Error(caps.erro);
+      S.percRefs   = caps.map(c => c.id);
+      refsEl.innerHTML = '';
+      caps.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value       = c.id;
+        opt.textContent = c.numero;
+        refsEl.appendChild(opt);
+      });
+      const has = caps.length > 0;
+      document.getElementById('perc-pass-status').textContent =
+        has ? `✓ ${caps.length} capítulos.` : 'Sem capítulos.';
+      if (has) apibibleLoadPassagem(caps[0].id);
+    })
+    .catch(err => {
+      document.getElementById('perc-pass-status').textContent = `⚠ ${err.message}`;
+    });
+}
+
+function apibibleLoadPassagem(passIdOverride) {
+  const bibliaId = document.getElementById('apibible-biblia')?.value;
+  const passId   = passIdOverride || document.getElementById('perc-refs').value;
+  if (!bibliaId || !passId) return;
+
+  const txt = document.getElementById('perc-texto');
+  txt.textContent = '⏳ A carregar…';
+  document.getElementById('perc-pass-status').textContent = 'A buscar…';
+
+  fetch(`/api/apibible/passagem?biblia_id=${enc(bibliaId)}&passagem_id=${enc(passId)}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.erro) throw new Error(d.erro);
+      txt.textContent = d.texto || '';
+      const words = (d.texto || '').trim().split(/\s+/).filter(Boolean).length;
+      document.getElementById('perc-pass-status').textContent =
+        `✓ ${d.ref} — ${words} palavras.`;
+      setPercBtn('btn-perc-traduzir', !!d.texto);
+      setPercBtn('btn-perc-copiar',   !!d.texto);
+    })
+    .catch(err => {
+      txt.textContent = `⚠ Erro: ${err.message}`;
+    });
+}
+
+// ── API.Bible key dialog ──────────────────────────────────────────────────────
+
+function showApibibleKeyDialog() {
+  const el = document.getElementById('apibible-key-input');
+  if (el) el.value = '';
+  document.getElementById('apibible-dialog').style.display = 'flex';
+  if (el) el.focus();
+}
+function closeApibibleKeyDialog() {
+  document.getElementById('apibible-dialog').style.display = 'none';
+}
+async function saveApibibleKey() {
+  const chave = document.getElementById('apibible-key-input').value.trim();
+  if (!chave) return;
+  const resp = await fetch('/api/apibible/chave', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({chave}),
+  });
+  const d = await resp.json();
+  setStatus(d.ok ? '✓ Chave API.Bible guardada.' : `⚠ ${d.msg}`);
+  closeApibibleKeyDialog();
+  if (d.ok && onlineFonte() === 'apibible') apibibleLoadBiblias();
+}
+document.getElementById('apibible-key-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveApibibleKey();
+  if (e.key === 'Escape') closeApibibleKeyDialog();
+});
 
 // ── utilitários ───────────────────────────────────────────────────────────────
 
@@ -536,7 +887,12 @@ async function readSSEStream(body, handlers) {
 
 // ── init ──────────────────────────────────────────────────────────────────────
 
-// carrega catálogo Perseus ao primeiro clique na aba
+// carrega catálogo ao primeiro clique na aba (conforme a fonte activa)
 document.querySelector('[data-tab="tab-online"]')?.addEventListener('click', () => {
-  if (!S.percObras.length) percLoadCatalog();
+  if (!S.percObras.length) {
+    const fonte = onlineFonte();
+    if (fonte === 'sefaria') sefariaLoadCatalog();
+    else if (fonte === 'apibible') apibibleInit();
+    else percLoadCatalog();
+  }
 }, {once: true});
