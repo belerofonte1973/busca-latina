@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QTextEdit, QLabel, QSpinBox, QCheckBox,
     QButtonGroup, QRadioButton, QGroupBox, QSplitter, QListWidget,
     QListWidgetItem, QStatusBar, QFrame, QSizePolicy, QComboBox, QSlider,
-    QInputDialog, QMessageBox, QDialog,
+    QInputDialog, QMessageBox, QTabWidget,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QPalette
@@ -67,7 +67,7 @@ try:
     _PRONUNCIA_OK = True
 except ImportError:
     VOZES = VOZES_LATIM = VOZES_GREGO = []
-    VOZES_DEFAULT_GREGO = "grc"
+    VOZES_DEFAULT_GREGO = "el_GR-rapunzelina-low"
     _PRONUNCIA_OK = False
 
 try:
@@ -533,7 +533,7 @@ class PercObraCompletaThread(QThread):
 
 # ── diálogo Perseus Online ────────────────────────────────────────────────────
 
-class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
+class PerseusOnlineWidget(QWidget):
     """Navegador de textos gregos e latinos do Perseus Project (CTS API)."""
 
     texto_enviado    = pyqtSignal(str)   # texto a enviar para a janela principal
@@ -541,8 +541,6 @@ class PerseusOnlineDialog(QDialog if _PERSEUS_API_OK else object):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Textos Online — Perseus Project")
-        self.resize(1050, 650)
         self._obras    = []
         self._cat_thr  = None
         self._refs_thr = None
@@ -903,7 +901,7 @@ class BuscaLatina(QMainWindow):
         self._settings_timer      = None
         self._reiniciar_timer     = None
         self._cache               = self._cache_carregar()
-        self._perseus_dialog      = None
+        self._perseus_widget      = None
         self._build_ui()
         self._carregar_settings()
 
@@ -911,11 +909,20 @@ class BuscaLatina(QMainWindow):
 
     def _build_ui(self):
         self.setWindowTitle("Busca Greco-Latina")
-        self.resize(1000, 700)
+        self.resize(1200, 750)
 
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        _main = QVBoxLayout(central)
+        _main.setContentsMargins(0, 0, 0, 0)
+        _main.setSpacing(0)
+
+        self.tabs = QTabWidget()
+        _main.addWidget(self.tabs)
+
+        tab_busca = QWidget()
+        self.tabs.addTab(tab_busca, "🔍 Busca")
+        root = QVBoxLayout(tab_busca)
         root.setSpacing(8)
         root.setContentsMargins(10, 10, 10, 6)
 
@@ -939,14 +946,6 @@ class BuscaLatina(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._on_stop)
         search_row.addWidget(self.btn_stop)
-
-        if _PERSEUS_API_OK:
-            self.btn_perseus = QPushButton("🌐 Textos Online")
-            self.btn_perseus.setToolTip(
-                "Navegar textos gregos e latinos do Perseus Project (online)"
-            )
-            self.btn_perseus.clicked.connect(self._on_perseus_online)
-            search_row.addWidget(self.btn_perseus)
 
         root.addLayout(search_row)
 
@@ -1261,31 +1260,21 @@ class BuscaLatina(QMainWindow):
         self._work_order  = []
         self._pattern     = None
 
+        # ── aba Textos Online ─────────────────────────────────────────────────
+        if _PERSEUS_API_OK:
+            self._perseus_widget = PerseusOnlineWidget(self)
+            self._perseus_widget.texto_enviado.connect(self.definir_texto_para_traduzir)
+            self._perseus_widget.traduzir_pedido.connect(self._traduzir_texto_online)
+            self._perseus_widget.texto_passagem.selectionChanged.connect(
+                self._on_selecao_dialog_mudada
+            )
+            self.tabs.addTab(self._perseus_widget, "🌐 Textos Online")
+
     def _sep(self):
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
         return sep
-
-    # ── Perseus Online ────────────────────────────────────────────────────────
-
-    def _on_perseus_online(self):
-        if not _PERSEUS_API_OK:
-            return
-        if self._perseus_dialog is None:
-            self._perseus_dialog = PerseusOnlineDialog(self)
-            self._perseus_dialog.texto_enviado.connect(
-                self.definir_texto_para_traduzir
-            )
-            self._perseus_dialog.traduzir_pedido.connect(
-                self._traduzir_texto_online
-            )
-            self._perseus_dialog.texto_passagem.selectionChanged.connect(
-                self._on_selecao_dialog_mudada
-            )
-        self._perseus_dialog.show()
-        self._perseus_dialog.raise_()
-        self._perseus_dialog.activateWindow()
 
     def definir_texto_para_traduzir(self, texto: str):
         """Recebe texto do Perseus Online e prepara-o para tradução."""
@@ -1303,10 +1292,10 @@ class BuscaLatina(QMainWindow):
         self._lancar_gemini(texto)
 
     def _on_selecao_dialog_mudada(self):
-        """Detecta língua da selecção na janela Textos Online e ajusta vozes."""
-        if self._perseus_dialog is None:
+        """Detecta língua da selecção na aba Textos Online e ajusta vozes."""
+        if self._perseus_widget is None:
             return
-        sel = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+        sel = self._perseus_widget.texto_passagem.textCursor().selectedText().strip()
         if sel:
             self._sincronizar_lingua(sel)
 
@@ -1711,9 +1700,9 @@ class BuscaLatina(QMainWindow):
         if sel:
             sel = re.sub(r'^[▶■─=\s]+', '', sel, flags=re.MULTILINE)
             return sel.strip()
-        # 1b. Selecção na janela Textos Online
-        if self._perseus_dialog is not None and self._perseus_dialog.isVisible():
-            sel_online = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+        # 1b. Selecção na aba Textos Online
+        if self._perseus_widget is not None:
+            sel_online = self._perseus_widget.texto_passagem.textCursor().selectedText().strip()
             if sel_online:
                 return sel_online
         # 2. Passagem activa (último resultado exibido / obra seleccionada)
@@ -1749,13 +1738,13 @@ class BuscaLatina(QMainWindow):
         btn_0 = self.bg_pron.button(0)
         btn_1 = self.bg_pron.button(1)
         if e_grego:
-            btn_0.setText("Reconstituído")
-            btn_1.setText("Moderno (el)")
+            btn_0.setText("Offline")
+            btn_1.setText("Online")
             self.pron_grp.setTitle("Pronúncia")
             # Liga os botões de pronúncia grega à troca automática de voz
             btn_0.clicked.connect(self._on_pron_grega_reconstituida)
             btn_1.clicked.connect(self._on_pron_grega_moderna)
-            # Começa em "Reconstituído" com espeak grc
+            # Começa em "Offline" com Piper (Rapunzelina)
             btn_0.setChecked(True)
             self._on_pron_grega_reconstituida()
         else:
@@ -1770,16 +1759,16 @@ class BuscaLatina(QMainWindow):
             self.pron_grp.setTitle("Variante")
 
     def _on_pron_grega_reconstituida(self):
-        """Selecciona espeak-ng grc (pronúncia reconstituída)."""
+        """Selecciona Rapunzelina (Piper, offline) para grego."""
         for i in range(self.combo_voz.count()):
-            if self.combo_voz.itemData(i) == "grc":
+            if self.combo_voz.itemData(i) == "el_GR-rapunzelina-low":
                 self.combo_voz.setCurrentIndex(i)
                 return
 
     def _on_pron_grega_moderna(self):
-        """Selecciona Nestoras (el-GR) para pronúncia de grego moderno."""
+        """Selecciona Athina (online) para grego moderno."""
         for i in range(self.combo_voz.count()):
-            if self.combo_voz.itemData(i) == "el-GR-NestorasNeural":
+            if self.combo_voz.itemData(i) == "el-GR-AthinaNeural":
                 self.combo_voz.setCurrentIndex(i)
                 return
 
@@ -1877,8 +1866,8 @@ class BuscaLatina(QMainWindow):
         sel = self.text.textCursor().selectedText().strip()
         if sel:
             return sel
-        if self._perseus_dialog is not None and self._perseus_dialog.isVisible():
-            sel_online = self._perseus_dialog.texto_passagem.textCursor().selectedText().strip()
+        if self._perseus_widget is not None:
+            sel_online = self._perseus_widget.texto_passagem.textCursor().selectedText().strip()
             if sel_online:
                 return sel_online
         if self._selecao_salva:
