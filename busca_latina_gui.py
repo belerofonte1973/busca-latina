@@ -621,10 +621,6 @@ class PerseusOnlineWidget(QWidget):
         self.combo_refs = QComboBox()
         self.combo_refs.setMinimumWidth(120)
         ref_row.addWidget(self.combo_refs, 1)
-        self.btn_carregar = QPushButton("Carregar passagem")
-        self.btn_carregar.setEnabled(False)
-        self.btn_carregar.clicked.connect(self._carregar_passagem)
-        ref_row.addWidget(self.btn_carregar)
         rl.addLayout(ref_row)
 
         self.texto_passagem = QTextEdit()
@@ -652,14 +648,6 @@ class PerseusOnlineWidget(QWidget):
         )
         self.btn_traduzir.clicked.connect(self._on_traduzir)
         btn_row.addWidget(self.btn_traduzir)
-
-        self.btn_enviar = QPushButton("Enviar para tradução →")
-        self.btn_enviar.setEnabled(False)
-        self.btn_enviar.setToolTip(
-            "Envia o texto desta passagem para a área de tradução da janela principal"
-        )
-        self.btn_enviar.clicked.connect(self._enviar_para_traducao)
-        btn_row.addWidget(self.btn_enviar)
 
         self.btn_copiar = QPushButton("Copiar texto")
         self.btn_copiar.setEnabled(False)
@@ -695,10 +683,8 @@ class PerseusOnlineWidget(QWidget):
     def _carregar_catalogo(self, forcar: bool = False):
         self.lista_obras.clear()
         self.combo_refs.clear()
-        self.btn_carregar.setEnabled(False)
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
-        self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.lbl_cat_status.setText("⏳ A carregar catálogo Perseus…")
         self._cat_thr = PercCatalogThread(self._lingua(), forcar)
@@ -734,10 +720,8 @@ class PerseusOnlineWidget(QWidget):
         self.combo_refs.clear()
         self.texto_passagem.clear()
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
-        self.btn_carregar.setEnabled(False)
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
-        self.btn_enviar.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self._carregar_catalogo()
 
@@ -757,7 +741,6 @@ class PerseusOnlineWidget(QWidget):
         )
         self.combo_refs.clear()
         self.combo_refs.addItem("(a carregar…)", "")
-        self.btn_carregar.setEnabled(False)
         self.lbl_pass_status.setText("A carregar referências…")
 
         self._refs_thr = PercRefsThread(obra["edicao_urn"])
@@ -772,7 +755,6 @@ class PerseusOnlineWidget(QWidget):
             lbl = _papi.label_referencia(urn)
             self.combo_refs.addItem(lbl, urn)
         tem_refs = bool(refs)
-        self.btn_carregar.setEnabled(tem_refs)
         self.btn_obra_completa.setEnabled(tem_refs)
         self.lbl_pass_status.setText(
             f"✓ {len(refs)} referências." if refs else "Sem referências."
@@ -794,7 +776,6 @@ class PerseusOnlineWidget(QWidget):
         if not urn:
             return
         self.texto_passagem.setPlainText("⏳ A carregar passagem…")
-        self.btn_carregar.setEnabled(False)
         self.lbl_pass_status.setText("A buscar…")
 
         self._pass_thr = PercPassThread(urn)
@@ -804,16 +785,13 @@ class PerseusOnlineWidget(QWidget):
 
     def _on_passagem_pronta(self, texto: str):
         self.texto_passagem.setPlainText(texto)
-        self.btn_carregar.setEnabled(True)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
-        self.btn_enviar.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
 
     def _on_passagem_erro(self, msg: str):
         self.texto_passagem.setPlainText(f"⚠ Erro ao carregar passagem:\n{msg}")
-        self.btn_carregar.setEnabled(True)
         self.lbl_pass_status.setText("⚠ Erro.")
 
     # ── ações do utilizador ───────────────────────────────────────────────────
@@ -833,7 +811,6 @@ class PerseusOnlineWidget(QWidget):
         n = len(self._refs)
         self.texto_passagem.setPlainText(f"⏳ A descarregar obra completa… 0/{n} secções")
         self.btn_obra_completa.setEnabled(False)
-        self.btn_carregar.setEnabled(False)
 
         self._obra_completa_thr = PercObraCompletaThread(self._edicao_urn_sel)
         self._obra_completa_thr.progresso.connect(self._on_obra_progresso)
@@ -847,10 +824,8 @@ class PerseusOnlineWidget(QWidget):
     def _on_obra_pronta(self, texto: str):
         self.texto_passagem.setPlainText(texto)
         self.btn_obra_completa.setEnabled(True)
-        self.btn_carregar.setEnabled(True)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
-        self.btn_enviar.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
         palavras = len(texto.split())
         self.lbl_pass_status.setText(f"✓ Obra completa — {palavras} palavras.")
@@ -865,7 +840,6 @@ class PerseusOnlineWidget(QWidget):
     def _on_obra_erro(self, msg: str):
         self.texto_passagem.setPlainText(f"⚠ Erro ao descarregar obra:\n{msg}")
         self.btn_obra_completa.setEnabled(True)
-        self.btn_carregar.setEnabled(True)
         self.lbl_pass_status.setText("⚠ Erro.")
 
     def _on_traduzir(self):

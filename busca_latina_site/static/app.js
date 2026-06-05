@@ -364,7 +364,6 @@ function percSelectWork(obra) {
 
   const refsEl = document.getElementById('perc-refs');
   refsEl.innerHTML = '<option>(a carregar…)</option>';
-  setPercBtn('btn-perc-load', false);
   setPercBtn('btn-perc-obra', false);
   document.getElementById('perc-pass-status').textContent = 'A carregar referências…';
 
@@ -381,7 +380,6 @@ function percSelectWork(obra) {
         refsEl.appendChild(opt);
       });
       const has = refs.length > 0;
-      setPercBtn('btn-perc-load', has);
       setPercBtn('btn-perc-obra', has);
       document.getElementById('perc-pass-status').textContent =
         has ? `✓ ${refs.length} referências.` : 'Sem referências.';
@@ -397,7 +395,6 @@ function percLoadPassagem(urnOverride) {
   if (!urn) return;
   const txt = document.getElementById('perc-texto');
   txt.textContent = '⏳ A carregar…';
-  setPercBtn('btn-perc-load', false);
   document.getElementById('perc-pass-status').textContent = 'A buscar…';
 
   fetch(`/api/perseus/passagem?urn=${enc(urn)}`)
@@ -405,17 +402,14 @@ function percLoadPassagem(urnOverride) {
     .then(d => {
       if (d.erro) throw new Error(d.erro);
       txt.textContent = d.texto || '';
-      setPercBtn('btn-perc-load', true);
       const words = (d.texto || '').trim().split(/\s+/).filter(Boolean).length;
       document.getElementById('perc-pass-status').textContent = `✓ ${words} palavras.`;
       const has = !!d.texto;
       setPercBtn('btn-perc-traduzir', has);
-      setPercBtn('btn-perc-enviar', has);
       setPercBtn('btn-perc-copiar', has);
     })
     .catch(err => {
       txt.textContent = `⚠ Erro: ${err.message}`;
-      setPercBtn('btn-perc-load', true);
     });
 }
 
@@ -427,7 +421,6 @@ function percObraCompleta() {
   const n   = S.percRefs.length;
   txt.textContent = `⏳ A descarregar obra completa… 0/${n}`;
   setPercBtn('btn-perc-obra', false);
-  setPercBtn('btn-perc-load', false);
 
   S.percObraES = new EventSource(`/api/perseus/obra?urn=${enc(S.percObraURN)}`);
 
@@ -439,9 +432,7 @@ function percObraCompleta() {
     const d = JSON.parse(e.data);
     txt.textContent = d.texto;
     setPercBtn('btn-perc-obra', true);
-    setPercBtn('btn-perc-load', true);
     setPercBtn('btn-perc-traduzir', true);
-    setPercBtn('btn-perc-enviar', true);
     setPercBtn('btn-perc-copiar', true);
     const words = d.texto.trim().split(/\s+/).filter(Boolean).length;
     document.getElementById('perc-pass-status').textContent = `✓ Obra completa — ${words} palavras.`;
@@ -450,7 +441,6 @@ function percObraCompleta() {
   S.percObraES.addEventListener('erro', e => {
     txt.textContent = `⚠ ${JSON.parse(e.data).msg}`;
     setPercBtn('btn-perc-obra', true);
-    setPercBtn('btn-perc-load', true);
     S.percObraES.close(); S.percObraES = null;
   });
 }
@@ -490,15 +480,6 @@ async function percTraduzir() {
   }
 }
 
-function percEnviarParaTrad() {
-  const texto = document.getElementById('perc-texto').textContent.trim();
-  if (!texto) return;
-  S.savedSel = texto;
-  switchTab('tab-busca');
-  const out = document.getElementById('trans-output');
-  out.textContent = '📜 Texto do Perseus (pronto para traduzir):\n\n' + texto;
-  setStatus('Texto Perseus carregado — clique em Traduzir →PT ou Comentário.');
-}
 
 function percCopiar() {
   const texto = document.getElementById('perc-texto').textContent;
