@@ -918,6 +918,13 @@ class PerseusOnlineWidget(QWidget):
         self.btn_copiar.setEnabled(False)
 
     def _carregar_catalogo(self, forcar: bool = False):
+        # Disconnect old thread to prevent stale signals from firing later
+        if self._cat_thr is not None:
+            try:
+                self._cat_thr.pronto.disconnect(self._on_catalogo_pronto)
+                self._cat_thr.erro.disconnect(self._on_catalogo_erro)
+            except (RuntimeError, TypeError):
+                pass
         self._reset_leitor()
         fonte = self._fonte()
         if fonte == "perseus":
@@ -946,6 +953,7 @@ class PerseusOnlineWidget(QWidget):
         self.lbl_cat_status.setText(f"⚠ Erro: {msg}")
 
     def _filtrar(self, query: str = ""):
+        self.lista_obras.blockSignals(True)
         self.lista_obras.clear()
         q = query.lower()
         for o in self._obras:
@@ -953,6 +961,7 @@ class PerseusOnlineWidget(QWidget):
                 item = QListWidgetItem(o["display"])
                 item.setData(Qt.UserRole, o)
                 self.lista_obras.addItem(item)
+        self.lista_obras.blockSignals(False)
 
     def _on_fonte_mudada(self):
         fonte = self._fonte()
