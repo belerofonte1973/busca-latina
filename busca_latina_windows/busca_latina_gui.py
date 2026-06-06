@@ -547,7 +547,7 @@ class BuscaLatina(QMainWindow):
 
         ctrl_ia.addWidget(QLabel("Língua:"))
         self.combo_lingua = QComboBox()
-        self.combo_lingua.addItems(["Latim", "Grego Antigo"])
+        self.combo_lingua.addItems(["Latim", "Grego Antigo", "Hebraico"])
         self.combo_lingua.setFixedWidth(120)
         ctrl_ia.addWidget(self.combo_lingua)
 
@@ -1097,7 +1097,7 @@ class BuscaLatina(QMainWindow):
         return self.combo_modelo.currentData()
 
     def _lingua_ollama(self) -> str:
-        return "la" if self.combo_lingua.currentIndex() == 0 else "grc"
+        return ("la", "grc", "hbo")[min(self.combo_lingua.currentIndex(), 2)]
 
     def _iniciar_ollama(self, modo: str):
         if not _OLLAMA_OK:
@@ -1232,7 +1232,7 @@ class BuscaLatina(QMainWindow):
         return self._texto_pronunciar
 
     def _lingua_api(self) -> str:
-        return "la" if self.combo_lingua.currentIndex() == 0 else "grc"
+        return ("la", "grc", "hbo")[min(self.combo_lingua.currentIndex(), 2)]
 
     def _rodar_traducao(self, texto: str, modo: str):
         if not texto.strip():
@@ -1258,7 +1258,10 @@ class BuscaLatina(QMainWindow):
         palavra = self.text.textCursor().selectedText().strip()
         if not palavra:
             return
-        modo = "lsj" if self.combo_lingua.currentIndex() == 1 else "ls"
+        idx  = self.combo_lingua.currentIndex()
+        modo = "lsj" if idx == 1 else "ls"
+        if idx == 2:  # hebraico — sem dicionário offline
+            return
         self._rodar_traducao(palavra, modo)
 
     def _on_parar_ia(self):

@@ -48,6 +48,16 @@ PROMPTS = {
         "(3) fornece apenas a tradução, sem transliteração nem comentários.\n\n"
         "Texto grego:\n{texto}\n\nTradução:"
     ),
+    "hbo": (
+        "És um especialista em hebraico bíblico e língua portuguesa europeia. "
+        "Traduz o seguinte texto do hebraico para português de Portugal, "
+        "de forma fluente e fiel ao original. "
+        "Regras obrigatórias: "
+        "(1) usa apenas palavras que existem em português; "
+        "(2) mantém concordância gramatical rigorosa em género e número; "
+        "(3) fornece apenas a tradução, sem transliteração nem comentários.\n\n"
+        "Texto hebraico:\n{texto}\n\nTradução:"
+    ),
     "comentario": (
         "És um professor de latim clássico. "
         "Faz um comentário filológico breve (3-5 frases) do seguinte trecho latino, "

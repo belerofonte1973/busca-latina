@@ -13,17 +13,20 @@ CACHE_FILE    = Path.home() / ".config" / "busca_latina" / "traducoes.json"
 
 def _detectar_lingua(texto: str) -> str | None:
     """
-    Detecta se o texto é principalmente grego ou latino pela distribuição
-    de codepoints Unicode. Devolve 'grc', 'la' ou None (inconclusivo).
+    Detecta se o texto é principalmente grego, latino ou hebraico pela distribuição
+    de codepoints Unicode. Devolve 'grc', 'la', 'hbo' ou None (inconclusivo).
     Requer pelo menos 4 letras alfabéticas para emitir opinião.
     """
     grego = sum(1 for c in texto
                 if 'Ͱ' <= c <= 'Ͽ' or 'ἀ' <= c <= '῿')
+    hebraico = sum(1 for c in texto if 'א' <= c <= 'ת')
     latino = sum(1 for c in texto
                  if c.isalpha() and ord(c) < 0x0370)
-    total = grego + latino
+    total = grego + hebraico + latino
     if total < 4:
         return None
+    if hebraico / total >= 0.40:
+        return "hbo"
     if grego / total >= 0.60:
         return "grc"
     if latino / total >= 0.60:
@@ -672,7 +675,7 @@ class PerseusOnlineWidget(QWidget):
     """Navegador de textos online: Perseus (grc/lat), Sefaria (heb), API.Bible (heb)."""
 
     texto_enviado    = pyqtSignal(str)
-    traduzir_pedido  = pyqtSignal(str)
+    traduzir_pedido  = pyqtSignal(str, str)   # (texto, lingua)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1177,7 +1180,7 @@ class PerseusOnlineWidget(QWidget):
     def _on_traduzir(self):
         texto = self._texto_activo()
         if texto:
-            self.traduzir_pedido.emit(texto)
+            self.traduzir_pedido.emit(texto, self._lingua_traducao())
 
     def _enviar_para_traducao(self):
         texto = self.texto_passagem.toPlainText().strip()
@@ -1476,7 +1479,7 @@ class BuscaLatina(QMainWindow):
 
         ctrl_ia.addWidget(QLabel("Língua:"))
         self.combo_lingua = QComboBox()
-        self.combo_lingua.addItems(["Latim", "Grego Antigo"])
+        self.combo_lingua.addItems(["Latim", "Grego Antigo", "Hebraico"])
         self.combo_lingua.setFixedWidth(120)
         ctrl_ia.addWidget(self.combo_lingua)
 
@@ -1720,10 +1723,11 @@ class BuscaLatina(QMainWindow):
             "Texto Perseus carregado — clique em Traduzir →PT ou Comentário."
         )
 
-    def _traduzir_texto_online(self, texto: str):
+    def _traduzir_texto_online(self, texto: str, lingua: str = "la"):
         """Traduz directamente o texto recebido da janela Textos Online."""
         self._selecao_salva = texto   # actualiza para outros usos (pronúncia, etc.)
-        self._lancar_gemini(texto)
+        self.tabs.setCurrentIndex(0)  # muda para aba Busca para mostrar a tradução
+        self._lancar_gemini(texto, lingua)
 
     def _on_selecao_dialog_mudada(self):
         """Detecta língua da selecção na aba Textos Online e ajusta vozes."""
@@ -1927,7 +1931,7 @@ class BuscaLatina(QMainWindow):
             return
         self._lancar_gemini(texto)
 
-    def _lancar_gemini(self, texto: str):
+    def _lancar_gemini(self, texto: str, lingua: str | None = None):
         """Lança a tradução Gemini para o texto fornecido directamente."""
         if not _GEMINI_OK:
             self.trans_out.setPlainText("⚠ gemini_lat.py não encontrado.")
@@ -1939,7 +1943,7 @@ class BuscaLatina(QMainWindow):
                                 "Obtenha gratuitamente em aistudio.google.com")
             return
         modelo = self.combo_gemini_modelo.currentData() or GEMINI_DEFAULT
-        lingua = self._lingua_ollama()
+        lingua = lingua or self._lingua_ollama()
 
         cached = self._cache_verificar(texto, lingua, modelo)
         if cached:
@@ -2062,7 +2066,7 @@ class BuscaLatina(QMainWindow):
         return self.combo_modelo.currentData()
 
     def _lingua_ollama(self) -> str:
-        return "la" if self.combo_lingua.currentIndex() == 0 else "grc"
+        return ("la", "grc", "hbo")[min(self.combo_lingua.currentIndex(), 2)]
 
     def _iniciar_ollama(self, modo: str):
         if not _OLLAMA_OK:
@@ -2154,10 +2158,18 @@ class BuscaLatina(QMainWindow):
 
     def _on_lingua_pron_mudada(self):
         """Actualiza o combo de vozes e os rótulos de variante conforme a língua."""
-        e_grego = self.combo_lingua.currentIndex() == 1  # 0=Latim, 1=Grego Antigo
+        idx = self.combo_lingua.currentIndex()
+        e_grego    = idx == 1
+        e_hebraico = idx == 2
         voz_actual = self.combo_voz.currentData()
 
-        vozes_filtradas = (VOZES_GREGO if e_grego else VOZES_LATIM) or VOZES
+        if e_hebraico:
+            vozes_filtradas = VOZES_HEBRAICO or VOZES
+        elif e_grego:
+            vozes_filtradas = VOZES_GREGO or VOZES
+        else:
+            vozes_filtradas = VOZES_LATIM or VOZES
+
         self.combo_voz.blockSignals(True)
         self.combo_voz.clear()
         idx_default = 0
@@ -2182,15 +2194,20 @@ class BuscaLatina(QMainWindow):
             btn_0.setChecked(True)
             self._on_pron_grega_reconstituida()
         else:
-            # Desliga os handlers gregos ao mudar de volta para latim
+            # Desliga os handlers gregos ao mudar de volta para latim/hebraico
             try:
                 btn_0.clicked.disconnect(self._on_pron_grega_reconstituida)
                 btn_1.clicked.disconnect(self._on_pron_grega_moderna)
             except RuntimeError:
                 pass
-            btn_0.setText("Clássico")
-            btn_1.setText("Eclesiástico")
-            self.pron_grp.setTitle("Variante")
+            if e_hebraico:
+                btn_0.setText("Online")
+                btn_1.setText("Offline")
+                self.pron_grp.setTitle("Voz")
+            else:
+                btn_0.setText("Clássico")
+                btn_1.setText("Eclesiástico")
+                self.pron_grp.setTitle("Variante")
 
     def _on_pron_grega_reconstituida(self):
         """Selecciona Rapunzelina (Piper, offline) para grego."""
@@ -2277,7 +2294,7 @@ class BuscaLatina(QMainWindow):
         lingua = _detectar_lingua(texto)
         if lingua is None:
             return
-        idx = 1 if lingua == "grc" else 0
+        idx = {"la": 0, "grc": 1, "hbo": 2}.get(lingua, 0)
         if self.combo_lingua.currentIndex() != idx:
             self.combo_lingua.setCurrentIndex(idx)   # → _on_lingua_pron_mudada
 

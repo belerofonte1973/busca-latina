@@ -1,10 +1,30 @@
 #!/usr/bin/env python3
 """
-pronunciar_latim.py — Pronúncia de latim
+pronunciar_latim.py — Pronúncia de latim e grego antigo
 Windows 11 ARM / Snapdragon X (ARM64)
 
 Motor principal : edge-tts (Python library, online, vozes neurais) + pygame
 Motor offline   : espeak-ng (se instalado) ou pyttsx3 (SAPI Windows)
+
+Vozes sugeridas para latim
+--------------------------
+  it-IT-DiegoNeural    — italiano masc. (clássico / eclesiástico)
+  it-IT-IsabellaNeural — italiano fem.  (clássico / eclesiástico)
+  la (espeak-ng)       — voz latina sintética (offline)
+
+Vozes sugeridas para grego
+--------------------------
+  el-GR-AthinaNeural    — grego moderno fem. neural (online)
+  el-GR-NestorasNeural  — grego moderno masc. neural (online)
+
+  Nota: vozes gregas modernas recebem texto monotónico;
+  a conversão polítonico→monotónico é feita automaticamente.
+
+Vozes sugeridas para hebraico
+-----------------------------
+  he-IL-AvriNeural  — hebraico masc. neural (online)
+  he-IL-HilaNeural  — hebraico fem. neural (online)
+  he (espeak-ng)    — hebraico masc. sintético (offline)
 """
 
 import asyncio
@@ -16,6 +36,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 # ── dependências opcionais ────────────────────────────────────────────────────
@@ -64,27 +85,42 @@ def _init_pygame() -> bool:
 # ── vozes disponíveis ─────────────────────────────────────────────────────────
 
 VOZES: list[tuple] = [
-    ("it-IT-DiegoNeural",    "Diego (italiano masc.) — online",      "edge",   "it"),
-    ("it-IT-IsabellaNeural", "Isabella (italiano fem.) — online",    "edge",   "it"),
-    ("es-ES-AlvaroNeural",   "Álvaro (espanhol masc.) — online",     "edge",   "es"),
-    ("es-ES-ElviraNeural",   "Elvira (espanhol fem.) — online",      "edge",   "es"),
-    ("pt-BR-AntonioNeural",  "Antônio (port. bras. masc.) — online", "edge",   "pt"),
-    ("pt-BR-FranciscaNeural","Francisca (port. bras. fem.) — online","edge",   "pt"),
+    # ── latim ──────────────────────────────────────────────────────────────────
+    ("it-IT-DiegoNeural",    "Diego (italiano masc.) — online",       "edge",   "la"),
+    ("it-IT-IsabellaNeural", "Isabella (italiano fem.) — online",     "edge",   "la"),
+    ("es-ES-AlvaroNeural",   "Álvaro (espanhol masc.) — online",      "edge",   "la"),
+    ("es-ES-ElviraNeural",   "Elvira (espanhol fem.) — online",       "edge",   "la"),
+    ("pt-BR-AntonioNeural",  "Antônio (port. bras. masc.) — online",  "edge",   "la"),
+    ("pt-BR-FranciscaNeural","Francisca (port. bras. fem.) — online", "edge",   "la"),
+    # ── grego ──────────────────────────────────────────────────────────────────
+    ("el-GR-AthinaNeural",   "Athina (grego fem.) — online",          "edge",   "grc"),
+    ("el-GR-NestorasNeural", "Nestoras (grego masc.) — online",       "edge",   "grc"),
+    # ── hebraico ───────────────────────────────────────────────────────────────
+    ("he-IL-AvriNeural",     "Avri (hebraico masc.) — online",        "edge",   "hbo"),
+    ("he-IL-HilaNeural",     "Hila (hebraico fem.) — online",         "edge",   "hbo"),
 ]
 
 if _ESPEAK:
     VOZES += [
-        ("la", "espeak-ng latim (offline)",    "espeak", "la"),
-        ("it", "espeak-ng italiano (offline)", "espeak", "it"),
+        ("la",  "espeak-ng latim (offline)",           "espeak", "la"),
+        ("it",  "espeak-ng italiano (offline)",        "espeak", "la"),
+        ("he",  "espeak-ng hebraico masc. (offline)",  "espeak", "hbo"),
     ]
 
 if _PYTTSX3_OK:
     VOZES += [
-        ("sapi:default", "Voz Windows padrão (SAPI, offline)", "sapi", ""),
+        ("sapi:default", "Voz Windows padrão (SAPI, offline)", "sapi", "la"),
     ]
+
+# grupos para filtrar na GUI
+VOZES_LATIM    = [v for v in VOZES if v[3] == "la"]
+VOZES_GREGO    = [v for v in VOZES if v[3] == "grc"]
+VOZES_HEBRAICO = [v for v in VOZES if v[3] == "hbo"]
 
 VOZES_DEFAULT_CLASSICO     = "it-IT-DiegoNeural"
 VOZES_DEFAULT_ECLESIASTICO = "it-IT-IsabellaNeural"
+VOZES_DEFAULT_GREGO        = "el-GR-AthinaNeural"
+VOZES_DEFAULT_HEBRAICO     = "he-IL-AvriNeural"
 
 
 # ── pré-processamento eclesiástico ────────────────────────────────────────────
