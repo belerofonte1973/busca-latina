@@ -5,7 +5,8 @@ pronunciar_latim.py — Pronúncia de latim e grego antigo com múltiplos motore
 Motores disponíveis
 -------------------
   edge-tts   (online, gratuito, voz neural — recomendado)
-  espeak-ng  (offline, voz sintética — fallback)
+  piper      (offline, voz neural humana — recomendado para grego)
+  espeak-ng  (offline, voz sintética — latim e IPA interno)
 
 Vozes sugeridas para latim
 --------------------------
@@ -15,22 +16,21 @@ Vozes sugeridas para latim
   es-ES-ElviraNeural   — espanhol fem.  (bom para eclesiástico)
   la (espeak-ng)       — voz latina sintética (offline)
 
-Vozes sugeridas para grego antigo
-----------------------------------
-  grc (espeak-ng)          — pronúncia reconstituída (offline, recomendado)
-  el-GR-NestorasNeural     — grego moderno masc. neural (online)
-  el-GR-AthinaNeural       — grego moderno fem. neural (online)
-  el (espeak-ng)           — grego moderno sintético (offline)
+Vozes sugeridas para grego
+--------------------------
+  el_GR-rapunzelina-low — Piper neural fem. (offline, recomendado)
+  el-GR-AthinaNeural    — grego moderno fem. neural (online)
+  el-GR-NestorasNeural  — grego moderno masc. neural (online)
 
-  Nota: edge-tts com vozes gregas recebe texto monotónico (sem diacríticos
-  antigos); espeak-ng grc aceita texto polítonico directamente.
+  Nota: vozes gregas modernas (Piper e edge-tts) recebem texto monotónico;
+  a conversão polítonico→monotónico é feita automaticamente.
 
 CLI:
   python3 pronunciar_latim.py "Arma virumque cano"
   python3 pronunciar_latim.py "Gloria in excelsis" --ecl
   python3 pronunciar_latim.py "amor" --ipa
   python3 pronunciar_latim.py "Gallia est omnis" --voz it-IT-IsabellaNeural
-  python3 pronunciar_latim.py "Ἄνδρα μοι ἔννεπε" --voz grc
+  python3 pronunciar_latim.py "Ἄνδρα μοι ἔννεπε" --voz el_GR-rapunzelina-low
   python3 pronunciar_latim.py "Ἄνδρα μοι ἔννεπε" --voz el-GR-NestorasNeural
 """
 
@@ -43,8 +43,10 @@ import tempfile
 import shutil
 from pathlib import Path
 
-# caminho do edge-tts (instalado pelo pipx/pip)
-_EDGE_TTS = str(Path.home() / ".local/share/pipx/venvs/pip/bin/edge-tts")
+# caminhos dos motores TTS
+_EDGE_TTS  = str(Path.home() / ".local/share/pipx/venvs/pip/bin/edge-tts")
+_PIPER     = str(Path.home() / ".local/bin/piper")
+_PIPER_DIR = Path.home() / ".local/share/piper"
 _FFPLAY    = shutil.which("ffplay")
 _ESPEAK    = shutil.which("espeak-ng")
 
@@ -67,24 +69,71 @@ VOZES = [
     ("la",                   "espeak-ng latim (offline)",              "espeak", "la"),
     ("it",                   "espeak-ng italiano (offline)",           "espeak", "la"),
     # ── grego ──────────────────────────────────────────────────────────────────
-    ("grc",                  "espeak grc — masc. padrão (offline)",   "espeak", "grc"),
-    ("grc+m3",               "espeak grc — masc. grave (offline)",    "espeak", "grc"),
-    ("grc+m5",               "espeak grc — masc. agudo (offline)",    "espeak", "grc"),
-    ("grc+f1",               "espeak grc — fem. padrão (offline)",    "espeak", "grc"),
-    ("grc+f3",               "espeak grc — fem. médio (offline)",     "espeak", "grc"),
-    ("grc+f5",               "espeak grc — fem. agudo (offline)",     "espeak", "grc"),
-    ("el-GR-NestorasNeural", "Nestoras (grego mod. masc.) — online",  "edge",   "grc"),
-    ("el-GR-AthinaNeural",   "Athina (grego mod. fem.) — online",     "edge",   "grc"),
-    ("el",                   "espeak grego moderno (offline)",         "espeak", "grc"),
+    ("el_GR-rapunzelina-low", "Rapunzelina (grego fem.) — offline",   "piper",  "grc"),
+    ("el-GR-AthinaNeural",    "Athina (grego fem.) — online",         "edge",   "grc"),
+    ("el-GR-NestorasNeural",  "Nestoras (grego masc.) — online",      "edge",   "grc"),
+    # ── hebraico (antigo / medieval) ───────────────────────────────────────────
+    # edge-tts: vozes neurais humanas de hebraico israelita moderno (online)
+    ("he-IL-AvriNeural",  "Avri (hebraico masc.) — online",              "edge",   "hbo"),
+    ("he-IL-HilaNeural",  "Hila (hebraico fem.) — online",               "edge",   "hbo"),
+    # espeak-ng: voz sintética offline — disponível sem download
+    ("he",                "espeak-ng hebraico masc. (offline)",           "espeak", "hbo"),
 ]
 
 # grupos para filtrar na GUI
-VOZES_LATIM = [v for v in VOZES if v[3] == "la"]
-VOZES_GREGO = [v for v in VOZES if v[3] == "grc"]
+VOZES_LATIM    = [v for v in VOZES if v[3] == "la"]
+VOZES_GREGO    = [v for v in VOZES if v[3] == "grc"]
+VOZES_HEBRAICO = [v for v in VOZES if v[3] == "hbo"]
 
 VOZES_DEFAULT_CLASSICO     = "it-IT-DiegoNeural"
 VOZES_DEFAULT_ECLESIASTICO = "it-IT-IsabellaNeural"
-VOZES_DEFAULT_GREGO        = "grc"
+VOZES_DEFAULT_GREGO        = "el_GR-rapunzelina-low"
+VOZES_DEFAULT_HEBRAICO     = "he-IL-AvriNeural"
+VOZES_DEFAULT_HEBRAICO_OFFLINE = "he"
+
+_PIPER_VOICES_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
+
+
+def baixar_modelo_piper(nome_voz: str, progresso_cb=None) -> bool:
+    """
+    Descarrega o modelo Piper (ONNX + JSON de configuração) para *nome_voz*
+    se ainda não estiver presente em _PIPER_DIR.
+
+    progresso_cb(msg: str) é chamado com a etapa actual (opcional).
+    Devolve True em caso de sucesso.
+
+    Exemplo: baixar_modelo_piper("he_IL-udi-medium")
+    """
+    onnx  = _PIPER_DIR / f"{nome_voz}.onnx"
+    jfile = _PIPER_DIR / f"{nome_voz}.onnx.json"
+    if onnx.exists() and jfile.exists():
+        return True
+
+    # Constrói o URL: «he_IL-udi-medium» → he/he_IL/udi/medium/
+    parts        = nome_voz.split("-")
+    lang_country = parts[0]                   # e.g. he_IL
+    lang         = lang_country.split("_")[0]  # e.g. he
+    quality      = parts[-1]                   # low / medium / high
+    speaker      = "-".join(parts[1:-1])       # udi / rapunzelina / …
+    base_url     = f"{_PIPER_VOICES_BASE}/{lang}/{lang_country}/{speaker}/{quality}"
+
+    import urllib.request
+    _PIPER_DIR.mkdir(parents=True, exist_ok=True)
+
+    for filename, dest in [
+        (f"{nome_voz}.onnx",      onnx),
+        (f"{nome_voz}.onnx.json", jfile),
+    ]:
+        url = f"{base_url}/{filename}"
+        try:
+            if progresso_cb:
+                progresso_cb(f"A descarregar {filename}…")
+            urllib.request.urlretrieve(url, dest)
+        except Exception:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return False
+    return True
 
 
 # ── pré-processamento eclesiástico ────────────────────────────────────────────
@@ -212,8 +261,8 @@ def pronunciar(texto: str,
     grupo_ling = voz_info[3] if voz_info else "la"
 
     if grupo_ling == "grc":
-        # Grego: espeak-ng grc aceita polítonico; edge-tts precisa de monotónico
-        if motor == "edge":
+        # Piper e edge-tts usam vozes de grego moderno: precisam de texto monotónico
+        if motor in ("edge", "piper"):
             texto_proc = _para_monotono(texto)
         else:
             texto_proc = texto   # espeak-ng grc lida com polítonico directamente
@@ -231,6 +280,32 @@ def pronunciar(texto: str,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+    elif motor == "piper":
+        # piper: TTS neural offline; gera WAV e reproduz com ffplay
+        model_path = _PIPER_DIR / f"{voz}.onnx"
+        if not model_path.exists():
+            print(f"[Erro: modelo Piper não encontrado: {model_path}]")
+            return
+        tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        tmp.close()
+        # velocidade → length_scale (1.0 = normal; <1 = mais rápido; >1 = mais lento)
+        length_scale = max(0.5, min(2.0, 1.0 - velocidade / 100.0))
+        _proc_tts = subprocess.Popen(
+            [_PIPER, '-m', str(model_path),
+             '--length-scale', f'{length_scale:.2f}',
+             '-f', tmp.name],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        _proc_tts.communicate(input=texto_proc.encode())
+        ret_code = _proc_tts.returncode
+        _proc_tts = None
+        if ret_code == 0 and _FFPLAY:
+            _proc_audio = subprocess.Popen(
+                [_FFPLAY, '-nodisp', '-autoexit', tmp.name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
     else:
         # edge-tts: gera MP3 e reproduz com ffplay
         if not Path(_EDGE_TTS).exists():

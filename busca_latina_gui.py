@@ -62,12 +62,15 @@ except ImportError:
 try:
     from pronunciar_latim import (pronunciar, parar, ipa_classico, ipa_grego,
                                    esta_a_falar, VOZES,
-                                   VOZES_LATIM, VOZES_GREGO,
-                                   VOZES_DEFAULT_GREGO)
+                                   VOZES_LATIM, VOZES_GREGO, VOZES_HEBRAICO,
+                                   VOZES_DEFAULT_GREGO, VOZES_DEFAULT_HEBRAICO,
+                                   baixar_modelo_piper)
     _PRONUNCIA_OK = True
 except ImportError:
-    VOZES = VOZES_LATIM = VOZES_GREGO = []
-    VOZES_DEFAULT_GREGO = "el_GR-rapunzelina-low"
+    VOZES = VOZES_LATIM = VOZES_GREGO = VOZES_HEBRAICO = []
+    VOZES_DEFAULT_GREGO    = "el_GR-rapunzelina-low"
+    VOZES_DEFAULT_HEBRAICO = "he-IL-AvriNeural"
+    baixar_modelo_piper    = None
     _PRONUNCIA_OK = False
 
 try:
@@ -438,6 +441,33 @@ class PronunciaThread(QThread):
             self.erro.emit(str(e))
 
 
+class DownloadPiperThread(QThread):
+    """Descarrega um modelo Piper em background."""
+    pronto    = pyqtSignal()
+    erro      = pyqtSignal(str)
+    progresso = pyqtSignal(str)
+
+    def __init__(self, nome_voz: str):
+        super().__init__()
+        self.nome_voz = nome_voz
+
+    def run(self):
+        if not _PRONUNCIA_OK or baixar_modelo_piper is None:
+            self.erro.emit("pronunciar_latim.py não encontrado")
+            return
+        try:
+            ok = baixar_modelo_piper(
+                self.nome_voz,
+                progresso_cb=lambda msg: self.progresso.emit(msg),
+            )
+            if ok:
+                self.pronto.emit()
+            else:
+                self.erro.emit(f"Falha ao descarregar {self.nome_voz}")
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
 class TranslateThread(QThread):
     done = pyqtSignal(str)
 
@@ -657,6 +687,12 @@ class PerseusOnlineWidget(QWidget):
         self._sefaria_titulo  = ""
         self._apibible_livro  = ""
         self._apibible_biblia = ""
+        # pronúncia
+        self.pron_thread               = None
+        self._download_thr             = None
+        self._texto_pronunciando_online = ""
+        self._ultimo_texto_online       = ""   # persiste após o áudio terminar
+        self._reiniciar_timer_online   = None
         self._build()
 
     # ── construção da UI ──────────────────────────────────────────────────────
@@ -740,6 +776,7 @@ class PerseusOnlineWidget(QWidget):
         ref_row.addWidget(QLabel("Referência (livro/secção):"))
         self.combo_refs = QComboBox()
         self.combo_refs.setMinimumWidth(120)
+        self.combo_refs.currentIndexChanged.connect(self._carregar_passagem)
         ref_row.addWidget(self.combo_refs, 1)
         rl.addLayout(ref_row)
 
@@ -779,6 +816,57 @@ class PerseusOnlineWidget(QWidget):
         btn_row.addWidget(self.lbl_pass_status)
         rl.addLayout(btn_row)
 
+        # barra de pronúncia
+        pron_row = QHBoxLayout()
+        pron_row.setSpacing(6)
+
+        pron_row.addWidget(QLabel("Pronúncia:"))
+
+        self.btn_pronunciar_online = QPushButton("🔊 Pronunciar")
+        self.btn_pronunciar_online.setToolTip("Pronuncia o texto seleccionado ou toda a passagem")
+        self.btn_pronunciar_online.setEnabled(_PRONUNCIA_OK)
+        self.btn_pronunciar_online.clicked.connect(self._on_pronunciar_online)
+        pron_row.addWidget(self.btn_pronunciar_online)
+
+        self.btn_parar_som_online = QPushButton("■ Parar")
+        self.btn_parar_som_online.setFixedWidth(70)
+        self.btn_parar_som_online.setEnabled(_PRONUNCIA_OK)
+        self.btn_parar_som_online.clicked.connect(self._on_parar_som_online)
+        pron_row.addWidget(self.btn_parar_som_online)
+
+        pron_row.addWidget(self._sep())
+
+        pron_row.addWidget(QLabel("Voz:"))
+        self.combo_voz_online = QComboBox()
+        self.combo_voz_online.setMinimumWidth(250)
+        pron_row.addWidget(self.combo_voz_online)
+
+        self.btn_baixar_voz = QPushButton("⬇ Baixar voz offline")
+        self.btn_baixar_voz.setToolTip(
+            "Descarrega o modelo Piper selecionado para uso offline\n"
+            "(apenas vozes marcadas '— offline')"
+        )
+        self.btn_baixar_voz.setEnabled(_PRONUNCIA_OK)
+        self.btn_baixar_voz.clicked.connect(self._on_baixar_voz)
+        pron_row.addWidget(self.btn_baixar_voz)
+
+        pron_row.addWidget(self._sep())
+
+        pron_row.addWidget(QLabel("Velocidade:"))
+        self.slider_vel_online = QSlider(Qt.Horizontal)
+        self.slider_vel_online.setRange(70, 220)
+        self.slider_vel_online.setValue(130)
+        self.slider_vel_online.setFixedWidth(110)
+        self.slider_vel_online.setTickInterval(30)
+        self.slider_vel_online.setTickPosition(QSlider.TicksBelow)
+        self.lbl_vel_online = QLabel("0%")
+        self.slider_vel_online.valueChanged.connect(self._on_velocidade_online_mudada)
+        pron_row.addWidget(self.slider_vel_online)
+        pron_row.addWidget(self.lbl_vel_online)
+
+        pron_row.addStretch()
+        rl.addLayout(pron_row)
+
         split.addWidget(right)
         split.setSizes([300, 750])
         root.addWidget(split, 1)
@@ -792,7 +880,8 @@ class PerseusOnlineWidget(QWidget):
         nota.setOpenExternalLinks(True)
         root.addWidget(nota)
 
-        # carrega catálogo ao abrir
+        # carrega catálogo e vozes ao abrir
+        self._atualizar_vozes_online()
         self._carregar_catalogo()
 
     # ── catálogo ──────────────────────────────────────────────────────────────
@@ -861,6 +950,7 @@ class PerseusOnlineWidget(QWidget):
         self.filtro.clear()
         self._obras = []
         self._refs  = []
+        self._atualizar_vozes_online()
         self._carregar_catalogo()
 
     def _on_lingua_mudada(self):
@@ -873,6 +963,7 @@ class PerseusOnlineWidget(QWidget):
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_copiar.setEnabled(False)
+        self._atualizar_vozes_online()
         self._carregar_catalogo()
 
     def _on_cat_sefaria_mudada(self):
@@ -920,10 +1011,12 @@ class PerseusOnlineWidget(QWidget):
 
     def _on_refs_prontas(self, refs: list):
         self._refs = refs
+        self.combo_refs.blockSignals(True)
         self.combo_refs.clear()
         for urn in refs:
             lbl = _papi.label_referencia(urn)
             self.combo_refs.addItem(lbl, urn)
+        self.combo_refs.blockSignals(False)
         tem_refs = bool(refs)
         self.btn_obra_completa.setEnabled(tem_refs)
         self.lbl_pass_status.setText(
@@ -939,9 +1032,11 @@ class PerseusOnlineWidget(QWidget):
 
     def _on_sefaria_refs_prontas(self, refs: list):
         self._refs = refs
+        self.combo_refs.blockSignals(True)
         self.combo_refs.clear()
         for ref in refs:
             self.combo_refs.addItem(ref.split(" ")[-1], ref)
+        self.combo_refs.blockSignals(False)
         has = bool(refs)
         self.btn_obra_completa.setEnabled(has)
         self.lbl_pass_status.setText(f"✓ {len(refs)} capítulos." if has else "Sem capítulos.")
@@ -950,9 +1045,11 @@ class PerseusOnlineWidget(QWidget):
 
     def _on_apibible_caps_prontas(self, caps: list):
         self._refs = [c["id"] for c in caps]
+        self.combo_refs.blockSignals(True)
         self.combo_refs.clear()
         for c in caps:
             self.combo_refs.addItem(str(c["numero"]), c["id"])
+        self.combo_refs.blockSignals(False)
         has = bool(caps)
         self.lbl_pass_status.setText(f"✓ {len(caps)} capítulos." if has else "Sem capítulos.")
         if has:
@@ -1091,6 +1188,132 @@ class PerseusOnlineWidget(QWidget):
         texto = self.texto_passagem.toPlainText()
         QApplication.clipboard().setText(texto)
         self.lbl_pass_status.setText("✓ Copiado.")
+
+    # ── pronúncia (Textos Online) ─────────────────────────────────────────────
+
+    def _sep(self):
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        return sep
+
+    def _atualizar_vozes_online(self):
+        """Popula combo_voz_online com as vozes adequadas para a fonte/língua actual."""
+        fonte = self._fonte()
+        if fonte != "perseus":
+            vozes = VOZES_HEBRAICO or []
+        elif self._lingua() == "grc":
+            vozes = VOZES_GREGO or []
+        else:
+            vozes = VOZES_LATIM or []
+        if not vozes:
+            vozes = VOZES or []
+        self.combo_voz_online.clear()
+        for vid, rotulo, *_ in vozes:
+            self.combo_voz_online.addItem(rotulo, vid)
+
+    def _lancar_pronuncia_online(self, texto: str):
+        """Inicia (ou reinicia) a pronúncia com parâmetros actuais."""
+        if self.pron_thread and self.pron_thread.isRunning():
+            parar()
+            self.pron_thread.terminate()
+            self.pron_thread.wait(2000)
+        self._texto_pronunciando_online = texto
+        self._ultimo_texto_online = texto   # persiste para reinício por velocidade
+        voz = self.combo_voz_online.currentData() or VOZES_DEFAULT_HEBRAICO
+        velocidade = self.slider_vel_online.value() - 130
+        self.pron_thread = PronunciaThread(texto, voz, 'classico', velocidade)
+        self.pron_thread.erro.connect(
+            lambda e: self.lbl_pass_status.setText(f"Pronúncia: {e}")
+        )
+        self.pron_thread.finished.connect(
+            lambda: setattr(self, '_texto_pronunciando_online', '')
+        )
+        self.pron_thread.start()
+
+    def _on_pronunciar_online(self):
+        if not _PRONUNCIA_OK:
+            return
+        sel = self.texto_passagem.textCursor().selectedText().strip()
+        texto = sel if sel else self.texto_passagem.toPlainText().strip()[:3000]
+        if not texto:
+            return
+        self._lancar_pronuncia_online(texto)
+
+    def _on_parar_som_online(self):
+        if _PRONUNCIA_OK:
+            parar()
+        if self.pron_thread and self.pron_thread.isRunning():
+            self.pron_thread.terminate()
+        self._texto_pronunciando_online = ""
+
+    def _on_velocidade_online_mudada(self, valor: int):
+        delta = valor - 130
+        sinal = "+" if delta >= 0 else ""
+        self.lbl_vel_online.setText(f"{sinal}{delta}%")
+        # Reinicia sempre que houver um texto já pronunciado (mesmo que o áudio
+        # tenha terminado), com debounce de 400 ms para não disparar a cada tick.
+        if _PRONUNCIA_OK and self._ultimo_texto_online:
+            if self._reiniciar_timer_online is None:
+                self._reiniciar_timer_online = QTimer(self)
+                self._reiniciar_timer_online.setSingleShot(True)
+                self._reiniciar_timer_online.timeout.connect(
+                    self._reiniciar_pronuncia_online
+                )
+            self._reiniciar_timer_online.start(400)
+
+    def _reiniciar_pronuncia_online(self):
+        if _PRONUNCIA_OK and self._ultimo_texto_online:
+            self._lancar_pronuncia_online(self._ultimo_texto_online)
+
+    def _on_baixar_voz(self):
+        from PyQt5.QtWidgets import QMessageBox as _QMB
+        if not _PRONUNCIA_OK:
+            _QMB.warning(self, "Indisponível",
+                         "Módulo pronunciar_latim.py não encontrado.")
+            return
+        voz_id = self.combo_voz_online.currentData()
+        if not voz_id:
+            return
+        voz_info = next((v for v in VOZES if v[0] == voz_id), None)
+        motor = voz_info[2] if voz_info else ""
+        # edge-tts — sem download necessário
+        if motor == "edge":
+            _QMB.information(self, "Voz online",
+                             "Esta é uma voz online (edge-tts) e não precisa de download.\n"
+                             "Selecione uma voz '— offline' para descarregar.")
+            return
+        # espeak-ng padrão — já está disponível
+        if motor == "espeak" and voz_id == "he":
+            _QMB.information(self, "Já disponível",
+                             "A voz espeak-ng hebraico já está instalada — "
+                             "pode usar imediatamente sem download.")
+            return
+        if self._download_thr is not None and self._download_thr.isRunning():
+            return
+        self.btn_baixar_voz.setEnabled(False)
+        self.lbl_pass_status.setText(f"⬇ A descarregar {voz_id}…")
+        self._download_thr = DownloadPiperThread(voz_id)
+        self._download_thr.pronto.connect(self._on_download_pronto)
+        self._download_thr.erro.connect(self._on_download_erro)
+        self._download_thr.progresso.connect(
+            lambda msg: self.lbl_pass_status.setText(f"⬇ {msg}")
+        )
+        self._download_thr.start()
+
+    def _on_download_pronto(self):
+        self.btn_baixar_voz.setEnabled(True)
+        self.lbl_pass_status.setText("✓ Voz descarregada.")
+        from PyQt5.QtWidgets import QMessageBox as _QMB
+        _QMB.information(self, "Download concluído",
+                         "Modelo de voz Piper descarregado com sucesso.\n"
+                         "Pode agora usar a voz offline sem internet.")
+
+    def _on_download_erro(self, msg: str):
+        self.btn_baixar_voz.setEnabled(True)
+        self.lbl_pass_status.setText(f"⚠ Erro: {msg}")
+        from PyQt5.QtWidgets import QMessageBox as _QMB
+        _QMB.warning(self, "Erro de download", msg)
 
 
 # ── janela principal ──────────────────────────────────────────────────────────
