@@ -789,7 +789,20 @@ class PerseusOnlineWidget(QWidget):
         self.texto_passagem.setPlaceholderText(
             "Selecione uma obra à esquerda e depois uma referência acima."
         )
-        rl.addWidget(self.texto_passagem, 1)
+
+        self.trans_out_online = QTextEdit()
+        self.trans_out_online.setReadOnly(True)
+        self.trans_out_online.setFont(QFont("serif", 10))
+        self.trans_out_online.setPlaceholderText(
+            "🌟 Tradução →PT — seleccione texto e clique em «Traduzir →PT»"
+        )
+        self.trans_out_online.setMaximumHeight(220)
+
+        vsplit_online = QSplitter(Qt.Vertical)
+        vsplit_online.addWidget(self.texto_passagem)
+        vsplit_online.addWidget(self.trans_out_online)
+        vsplit_online.setSizes([400, 150])
+        rl.addWidget(vsplit_online, 1)
 
         # barra de botões inferior
         btn_row = QHBoxLayout()
@@ -1726,8 +1739,9 @@ class BuscaLatina(QMainWindow):
     def _traduzir_texto_online(self, texto: str, lingua: str = "la"):
         """Traduz directamente o texto recebido da janela Textos Online."""
         self._selecao_salva = texto   # actualiza para outros usos (pronúncia, etc.)
-        self.tabs.setCurrentIndex(0)  # muda para aba Busca para mostrar a tradução
-        self._lancar_gemini(texto, lingua)
+        destino = (self._perseus_widget.trans_out_online
+                   if self._perseus_widget is not None else self.trans_out)
+        self._lancar_gemini(texto, lingua, destino=destino)
 
     def _on_selecao_dialog_mudada(self):
         """Detecta língua da selecção na aba Textos Online e ajusta vozes."""
@@ -1931,10 +1945,11 @@ class BuscaLatina(QMainWindow):
             return
         self._lancar_gemini(texto)
 
-    def _lancar_gemini(self, texto: str, lingua: str | None = None):
+    def _lancar_gemini(self, texto: str, lingua: str | None = None, destino=None):
         """Lança a tradução Gemini para o texto fornecido directamente."""
+        destino = destino or self.trans_out
         if not _GEMINI_OK:
-            self.trans_out.setPlainText("⚠ gemini_lat.py não encontrado.")
+            destino.setPlainText("⚠ gemini_lat.py não encontrado.")
             return
         chave = gemini_obter_chave()
         if not chave:
@@ -1947,7 +1962,7 @@ class BuscaLatina(QMainWindow):
 
         cached = self._cache_verificar(texto, lingua, modelo)
         if cached:
-            self.trans_out.setPlainText(cached)
+            destino.setPlainText(cached)
             self.status_bar.showMessage("✓ Tradução do histórico.")
             return
 
@@ -1955,19 +1970,19 @@ class BuscaLatina(QMainWindow):
             self._gemini_thread.stop()
             self._gemini_thread.wait(1000)
 
-        self.trans_out.setPlainText(f"🌟 Gemini ({modelo})…\n\n")
+        destino.setPlainText(f"🌟 Gemini ({modelo})…\n\n")
         self._gemini_thread = GeminiThread(texto, lingua, modelo, chave)
-        self._gemini_thread.chunk.connect(self._on_ollama_chunk)
+        self._gemini_thread.chunk.connect(
+            lambda frag, d=destino: self._append_chunk(frag, d))
         self._gemini_thread.status.connect(self.status_bar.showMessage)
         self._gemini_thread.done.connect(
             lambda: (
-                self._cache_guardar(texto, lingua, modelo,
-                                    self.trans_out.toPlainText()),
+                self._cache_guardar(texto, lingua, modelo, destino.toPlainText()),
                 self.status_bar.showMessage("✓ Tradução Gemini concluída."),
             )
         )
         self._gemini_thread.erro.connect(
-            lambda e: self.trans_out.setPlainText(f"⚠ Erro Gemini: {e}"))
+            lambda e: destino.setPlainText(f"⚠ Erro Gemini: {e}"))
         self._gemini_thread.start()
         self.status_bar.showMessage("Gemini a traduzir…")
 
@@ -2117,12 +2132,17 @@ class BuscaLatina(QMainWindow):
         self._ollama_thread.start()
         self.status_bar.showMessage(f"Ollama a processar…")
 
+    def _append_chunk(self, frag: str, destino=None):
+        """Acrescenta um fragmento de texto ao widget de saída indicado."""
+        d = destino or self.trans_out
+        cursor = d.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        d.setTextCursor(cursor)
+        d.insertPlainText(frag)
+
     def _on_ollama_chunk(self, frag: str):
         """Recebe cada fragmento do modelo e acrescenta ao campo de saída."""
-        cursor = self.trans_out.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        self.trans_out.setTextCursor(cursor)
-        self.trans_out.insertPlainText(frag)
+        self._append_chunk(frag, self.trans_out)
 
     def _on_ollama_traduzir(self):
         self._iniciar_ollama("traduzir")
@@ -2198,7 +2218,7 @@ class BuscaLatina(QMainWindow):
             try:
                 btn_0.clicked.disconnect(self._on_pron_grega_reconstituida)
                 btn_1.clicked.disconnect(self._on_pron_grega_moderna)
-            except RuntimeError:
+            except (RuntimeError, TypeError):
                 pass
             if e_hebraico:
                 btn_0.setText("Online")
