@@ -296,6 +296,7 @@ def pronunciar(texto: str,
              '-f', tmp.name],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         _proc_tts.communicate(input=texto_proc.encode())
         ret_code = _proc_tts.returncode
@@ -328,6 +329,7 @@ def pronunciar(texto: str,
         _proc_tts = subprocess.Popen(
             cmd_edge,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         _proc_tts.wait()          # bloqueia o thread PronunciaThread até gerar o MP3
         ret_code = _proc_tts.returncode
