@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTextEdit, QLabel, QSpinBox, QCheckBox,
     QButtonGroup, QRadioButton, QGroupBox, QSplitter, QListWidget,
-    QListWidgetItem, QStatusBar, QFrame, QSizePolicy, QComboBox, QSlider,
+    QListWidgetItem, QStatusBar, QFrame, QComboBox, QSlider,
     QInputDialog, QMessageBox, QTabWidget,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -46,26 +46,21 @@ from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QPalette
 # módulo de tradução e dicionário
 sys.path.insert(0, str(Path.home()))
 try:
-    from traduzir_lat_grc import (traduzir_para_pt, lookup_ls, lookup_lsj,
-                                   lookup_collatinus_pt, lookup_wikt_pt,
-                                   WIKT_PT_DB)
+    from traduzir_lat_grc import (lookup_ls, lookup_lsj,
+                                   lookup_collatinus_pt, lookup_wikt_pt)
     _TRADUCAO_OK = True
 except ImportError:
-    WIKT_PT_DB   = None
     _TRADUCAO_OK = False
 
 try:
-    from ollama_lat import (traduzir_stream, comentario, listar_modelos,
-                            modelo_disponivel, _melhor_modelo, MODELOS_RECOMENDADOS,
-                            precarregar_modelo)
+    from ollama_lat import traduzir_stream, listar_modelos, precarregar_modelo
     _OLLAMA_OK = True
 except ImportError:
     _OLLAMA_OK = False
 
 try:
     from pronunciar_latim import (pronunciar, parar, ipa_classico, ipa_grego,
-                                   esta_a_falar, VOZES,
-                                   VOZES_LATIM, VOZES_GREGO, VOZES_HEBRAICO,
+                                   VOZES, VOZES_LATIM, VOZES_GREGO, VOZES_HEBRAICO,
                                    VOZES_DEFAULT_GREGO, VOZES_DEFAULT_HEBRAICO,
                                    baixar_modelo_piper)
     _PRONUNCIA_OK = True
@@ -474,11 +469,10 @@ class DownloadPiperThread(QThread):
 class TranslateThread(QThread):
     done = pyqtSignal(str)
 
-    def __init__(self, texto, modo, lingua):
+    def __init__(self, texto, modo):
         super().__init__()
-        self.texto  = texto
-        self.modo   = modo   # 'traduzir' | 'ls' | 'lsj'
-        self.lingua = lingua
+        self.texto = texto
+        self.modo  = modo
 
     def run(self):
         if not _TRADUCAO_OK:
@@ -674,8 +668,7 @@ class ApibiblePassThread(QThread):
 class PerseusOnlineWidget(QWidget):
     """Navegador de textos online: Perseus (grc/lat), Sefaria (heb), API.Bible (heb)."""
 
-    texto_enviado    = pyqtSignal(str)
-    traduzir_pedido  = pyqtSignal(str, str)   # (texto, lingua)
+    traduzir_pedido = pyqtSignal(str, str)   # (texto, lingua)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -967,10 +960,8 @@ class PerseusOnlineWidget(QWidget):
         fonte = self._fonte()
         self.combo_lingua.setVisible(fonte == "perseus")
         self.combo_cat_sefaria.setVisible(fonte == "sefaria")
-        # RTL para hebraico
-        from PyQt5.QtCore import Qt as _Qt
         self.texto_passagem.setLayoutDirection(
-            _Qt.RightToLeft if fonte != "perseus" else _Qt.LeftToRight
+            Qt.RightToLeft if fonte != "perseus" else Qt.LeftToRight
         )
         self.filtro.clear()
         self._obras = []
@@ -1204,11 +1195,6 @@ class PerseusOnlineWidget(QWidget):
         if texto:
             self.traduzir_pedido.emit(texto, self._lingua_traducao())
 
-    def _enviar_para_traducao(self):
-        texto = self.texto_passagem.toPlainText().strip()
-        if texto:
-            self.texto_enviado.emit(texto)
-
     def _copiar_texto(self):
         texto = self.texto_passagem.toPlainText()
         QApplication.clipboard().setText(texto)
@@ -1292,27 +1278,24 @@ class PerseusOnlineWidget(QWidget):
             self._lancar_pronuncia_online(self._ultimo_texto_online)
 
     def _on_baixar_voz(self):
-        from PyQt5.QtWidgets import QMessageBox as _QMB
         if not _PRONUNCIA_OK:
-            _QMB.warning(self, "Indisponível",
-                         "Módulo pronunciar_latim.py não encontrado.")
+            QMessageBox.warning(self, "Indisponível",
+                                "Módulo pronunciar_latim.py não encontrado.")
             return
         voz_id = self.combo_voz_online.currentData()
         if not voz_id:
             return
         voz_info = next((v for v in VOZES if v[0] == voz_id), None)
         motor = voz_info[2] if voz_info else ""
-        # edge-tts — sem download necessário
         if motor == "edge":
-            _QMB.information(self, "Voz online",
-                             "Esta é uma voz online (edge-tts) e não precisa de download.\n"
-                             "Selecione uma voz '— offline' para descarregar.")
+            QMessageBox.information(self, "Voz online",
+                                    "Esta é uma voz online (edge-tts) e não precisa de download.\n"
+                                    "Selecione uma voz '— offline' para descarregar.")
             return
-        # espeak-ng padrão — já está disponível
         if motor == "espeak" and voz_id == "he":
-            _QMB.information(self, "Já disponível",
-                             "A voz espeak-ng hebraico já está instalada — "
-                             "pode usar imediatamente sem download.")
+            QMessageBox.information(self, "Já disponível",
+                                    "A voz espeak-ng hebraico já está instalada — "
+                                    "pode usar imediatamente sem download.")
             return
         if self._download_thr is not None and self._download_thr.isRunning():
             return
@@ -1329,16 +1312,14 @@ class PerseusOnlineWidget(QWidget):
     def _on_download_pronto(self):
         self.btn_baixar_voz.setEnabled(True)
         self.lbl_pass_status.setText("✓ Voz descarregada.")
-        from PyQt5.QtWidgets import QMessageBox as _QMB
-        _QMB.information(self, "Download concluído",
-                         "Modelo de voz Piper descarregado com sucesso.\n"
-                         "Pode agora usar a voz offline sem internet.")
+        QMessageBox.information(self, "Download concluído",
+                                "Modelo de voz Piper descarregado com sucesso.\n"
+                                "Pode agora usar a voz offline sem internet.")
 
     def _on_download_erro(self, msg: str):
         self.btn_baixar_voz.setEnabled(True)
         self.lbl_pass_status.setText(f"⚠ Erro: {msg}")
-        from PyQt5.QtWidgets import QMessageBox as _QMB
-        _QMB.warning(self, "Erro de download", msg)
+        QMessageBox.warning(self, "Erro de download", msg)
 
 
 # ── janela principal ──────────────────────────────────────────────────────────
@@ -1722,7 +1703,6 @@ class BuscaLatina(QMainWindow):
         # ── aba Textos Online ─────────────────────────────────────────────────
         if _PERSEUS_API_OK:
             self._perseus_widget = PerseusOnlineWidget(self)
-            self._perseus_widget.texto_enviado.connect(self.definir_texto_para_traduzir)
             self._perseus_widget.traduzir_pedido.connect(self._traduzir_texto_online)
             self._perseus_widget.texto_passagem.selectionChanged.connect(
                 self._on_selecao_dialog_mudada
@@ -1734,16 +1714,6 @@ class BuscaLatina(QMainWindow):
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
         return sep
-
-    def definir_texto_para_traduzir(self, texto: str):
-        """Recebe texto do Perseus Online e prepara-o para tradução."""
-        self._selecao_salva = texto
-        self.trans_out.setPlainText(
-            "📜 Texto do Perseus Project (pronto para traduzir):\n\n" + texto
-        )
-        self.status_bar.showMessage(
-            "Texto Perseus carregado — clique em Traduzir →PT ou Comentário."
-        )
 
     def _traduzir_texto_online(self, texto: str, lingua: str = "la"):
         """Traduz directamente o texto recebido da janela Textos Online."""
@@ -1822,13 +1792,9 @@ class BuscaLatina(QMainWindow):
 
         self._work_data[key].append((line_idx, lines, is_xml))
 
-        # mostra no texto somente se esta obra estiver selecionada (ou nenhuma)
         current = self.list_works.currentItem()
         if current is None or current.data(Qt.UserRole) == key:
-            if current is None:
-                self._append_result(key, line_idx, lines, is_xml)
-            else:
-                self._append_result(key, line_idx, lines, is_xml)
+            self._append_result(key, line_idx, lines, is_xml)
 
         self.status_bar.showMessage(
             f"{self.total} ocorrência(s) encontrada(s)…"
@@ -2355,9 +2321,6 @@ class BuscaLatina(QMainWindow):
         # Usa o primeiro bloco limpo (sem marcadores de formatação)
         return self._texto_pronunciar
 
-    def _lingua_api(self) -> str:
-        return "la" if self.combo_lingua.currentIndex() == 0 else "grc"
-
     def _rodar_traducao(self, texto: str, modo: str):
         if not texto.strip():
             return
@@ -2365,7 +2328,7 @@ class BuscaLatina(QMainWindow):
         self.trans_out.setText("⏳ Processando…")
         if self.trans_thread and self.trans_thread.isRunning():
             self.trans_thread.terminate()
-        self.trans_thread = TranslateThread(texto, modo, self._lingua_api())
+        self.trans_thread = TranslateThread(texto, modo)
         self.trans_thread.done.connect(self.trans_out.setPlainText)
         self.trans_thread.start()
 
@@ -2413,8 +2376,11 @@ class BuscaLatina(QMainWindow):
         menu.exec_(event.globalPos())
 
     def _on_parar_ia(self):
-        if hasattr(self, '_ollama_thread') and self._ollama_thread.isRunning():
+        if self._ollama_thread is not None and self._ollama_thread.isRunning():
             self._ollama_thread.stop()
+            self.status_bar.showMessage("Geração interrompida.")
+        if self._gemini_thread is not None and self._gemini_thread.isRunning():
+            self._gemini_thread.stop()
             self.status_bar.showMessage("Geração interrompida.")
 
     # ── cache de traduções ────────────────────────────────────────────────────

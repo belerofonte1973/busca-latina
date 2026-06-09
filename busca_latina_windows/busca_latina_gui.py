@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTextEdit, QLabel, QSpinBox, QCheckBox,
     QButtonGroup, QRadioButton, QGroupBox, QSplitter, QListWidget,
-    QListWidgetItem, QStatusBar, QFrame, QSizePolicy, QComboBox, QSlider,
+    QListWidgetItem, QStatusBar, QFrame, QComboBox, QSlider,
     QInputDialog, QMessageBox, QTabWidget,
 )
 from PyQt6.QtCore  import Qt, QThread, pyqtSignal, QTimer
@@ -53,31 +53,21 @@ from PyQt6.QtGui   import QFont, QTextCharFormat, QColor, QTextCursor, QPalette
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from traduzir_lat_grc import (traduzir_para_pt, lookup_ls, lookup_lsj,
-                                   lookup_collatinus_pt, lookup_wikt_pt,
-                                   WIKT_PT_DB)
+    from traduzir_lat_grc import (lookup_ls, lookup_lsj,
+                                   lookup_collatinus_pt, lookup_wikt_pt)
     _TRADUCAO_OK = True
 except ImportError:
-    try:
-        from traduzir_lat_grc import traduzir_para_pt, lookup_ls, lookup_lsj
-        lookup_collatinus_pt = lookup_wikt_pt = None
-        WIKT_PT_DB = None
-        _TRADUCAO_OK = True
-    except ImportError:
-        lookup_collatinus_pt = lookup_wikt_pt = None
-        WIKT_PT_DB = None
-        _TRADUCAO_OK = False
+    lookup_collatinus_pt = lookup_wikt_pt = None
+    _TRADUCAO_OK = False
 
 try:
-    from ollama_lat import (traduzir_stream, comentario, listar_modelos,
-                             modelo_disponivel, _melhor_modelo,
-                             MODELOS_RECOMENDADOS, precarregar_modelo)
+    from ollama_lat import (traduzir_stream, listar_modelos, precarregar_modelo)
     _OLLAMA_OK = True
 except ImportError:
     _OLLAMA_OK = False
 
 try:
-    from pronunciar_latim import (pronunciar, parar, ipa_classico, esta_a_falar,
+    from pronunciar_latim import (pronunciar, parar, ipa_classico,
                                    VOZES, VOZES_LATIM, VOZES_GREGO, VOZES_HEBRAICO,
                                    VOZES_DEFAULT_GREGO, VOZES_DEFAULT_HEBRAICO)
     _PRONUNCIA_OK = True
@@ -527,11 +517,10 @@ class DownloadPiperThread(QThread):
 class TranslateThread(QThread):
     done = pyqtSignal(str)
 
-    def __init__(self, texto, modo, lingua):
+    def __init__(self, texto, modo):
         super().__init__()
-        self.texto  = texto
-        self.modo   = modo
-        self.lingua = lingua
+        self.texto = texto
+        self.modo  = modo
 
     def run(self):
         if not _TRADUCAO_OK:
@@ -730,7 +719,6 @@ class ApibiblePassThread(QThread):
 class PerseusOnlineWidget(QWidget):
     """Navegador de textos online: Perseus (grc/lat), Sefaria (heb), API.Bible (heb)."""
 
-    texto_enviado   = pyqtSignal(str)
     traduzir_pedido = pyqtSignal(str, str)   # (texto, lingua)
 
     def __init__(self, parent=None):
@@ -1709,7 +1697,6 @@ class BuscaLatina(QMainWindow):
         # aba Textos Online
         if _PERSEUS_API_OK or _SEFARIA_OK or _APIBIBLE_OK:
             self._perseus_widget = PerseusOnlineWidget(self)
-            self._perseus_widget.texto_enviado.connect(self.definir_texto_para_traduzir)
             self._perseus_widget.traduzir_pedido.connect(self._traduzir_texto_online)
             self._perseus_widget.texto_passagem.selectionChanged.connect(
                 self._on_selecao_dialog_mudada
@@ -1721,13 +1708,6 @@ class BuscaLatina(QMainWindow):
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         return sep
-
-    def definir_texto_para_traduzir(self, texto: str):
-        self._selecao_salva = texto
-        self.trans_out.setPlainText(
-            "📜 Texto do Perseus Project (pronto para traduzir):\n\n" + texto
-        )
-        self.status_bar.showMessage("Texto Perseus carregado — clique em Traduzir →PT.")
 
     def _traduzir_texto_online(self, texto: str, lingua: str = "la"):
         self._selecao_salva = texto
@@ -2315,9 +2295,6 @@ class BuscaLatina(QMainWindow):
             return self._selecao_salva
         return self._texto_pronunciar
 
-    def _lingua_api(self) -> str:
-        return ("la", "grc", "hbo")[min(self.combo_lingua.currentIndex(), 2)]
-
     def _rodar_traducao(self, texto: str, modo: str):
         if not texto.strip():
             return
@@ -2325,7 +2302,7 @@ class BuscaLatina(QMainWindow):
         self.trans_out.setText("⏳ Processando…")
         if self.trans_thread and self.trans_thread.isRunning():
             self.trans_thread.terminate()
-        self.trans_thread = TranslateThread(texto, modo, self._lingua_api())
+        self.trans_thread = TranslateThread(texto, modo)
         self.trans_thread.done.connect(self.trans_out.setPlainText)
         self.trans_thread.start()
 
