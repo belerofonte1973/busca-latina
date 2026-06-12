@@ -38,7 +38,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QTextEdit, QLabel, QSpinBox, QCheckBox,
     QButtonGroup, QRadioButton, QGroupBox, QSplitter, QListWidget,
     QListWidgetItem, QStatusBar, QFrame, QComboBox, QSlider,
-    QInputDialog, QMessageBox, QTabWidget,
+    QInputDialog, QMessageBox, QTabWidget, QDialog, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QPalette
@@ -663,6 +663,99 @@ class ApibiblePassThread(QThread):
             self.erro.emit(str(e))
 
 
+# ── Alpheios morphology ───────────────────────────────────────────────────────
+
+class AlpheiosMorphThread(QThread):
+    """Chama a API Alpheios/Morpheus e devolve a análise morfológica em JSON."""
+    pronto = pyqtSignal(str, str)  # (json_text, word)
+    erro   = pyqtSignal(str)
+
+    def __init__(self, word: str, lang: str):
+        super().__init__()
+        self.word = word
+        self.lang = lang  # 'grc' ou 'lat'
+
+    def run(self):
+        import urllib.request
+        import urllib.parse
+        word = self.word.strip()
+        if self.lang == 'grc':
+            params = urllib.parse.urlencode({'word': word, 'lang': 'grc', 'engine': 'morpheusgrc'})
+            url = f'http://morph.alpheios.net/api/v1/analysis/word?{params}'
+        else:
+            params = urllib.parse.urlencode({'word': word, 'lang': 'lat', 'engine': 'morpheuslat'})
+            url = f'http://services.perseids.org/bsp/morphologyservice/analysis/word?{params}'
+        try:
+            req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+            with urllib.request.urlopen(req, timeout=12) as r:
+                data = r.read().decode('utf-8')
+            self.pronto.emit(data, word)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+def _alpheios_parse(json_text: str) -> str:
+    """Formata a resposta JSON da API Alpheios em texto legível."""
+    try:
+        d = json.loads(json_text)
+    except Exception:
+        return "Resposta inválida."
+
+    # tratamento de erro da API
+    if 'error' in d:
+        return f"API: {d['error'].get('$', d['error'])}"
+
+    try:
+        annotation = d['RDF']['Annotation']
+        body = annotation.get('Body', [])
+    except (KeyError, TypeError):
+        return "Estrutura de resposta inesperada."
+
+    if isinstance(body, dict):
+        body = [body]
+    if not body:
+        return "Sem análise disponível."
+
+    _LABELS = {
+        'pofs': 'classe', 'decl': 'declinação', 'gend': 'género',
+        'case': 'caso', 'num': 'número', 'tense': 'tempo',
+        'mood': 'modo', 'voice': 'voz', 'pers': 'pessoa',
+        'stemtype': 'tipo de tema',
+    }
+
+    def val(obj):
+        return obj.get('$', '') if isinstance(obj, dict) else str(obj)
+
+    lines = []
+    for b in body:
+        entry = b.get('rest', {}).get('entry', {})
+        if not entry:
+            continue
+        d_info = entry.get('dict', {})
+        hdwd   = val(d_info.get('hdwd', {}))
+        if hdwd:
+            lines.append(f"Lema: {hdwd}")
+        for k in ('pofs', 'decl', 'gend'):
+            v = val(d_info.get(k, {}))
+            if v:
+                lines.append(f"  {_LABELS.get(k, k)}: {v}")
+
+        infls = entry.get('infl', [])
+        if isinstance(infls, dict):
+            infls = [infls]
+        for infl in infls:
+            parts = []
+            for k in ('case', 'num', 'gend', 'pers', 'tense', 'mood', 'voice', 'stemtype'):
+                v = val(infl.get(k, {}))
+                if v:
+                    parts.append(f"{_LABELS.get(k, k)}: {v}")
+            if parts:
+                lines.append("  → " + " | ".join(parts))
+        lines.append("")
+
+    return "\n".join(lines).strip() or "Sem análise disponível."
+
+
 # ── diálogo Perseus Online ────────────────────────────────────────────────────
 
 class PerseusOnlineWidget(QWidget):
@@ -819,6 +912,14 @@ class PerseusOnlineWidget(QWidget):
         self.btn_copiar.setEnabled(False)
         self.btn_copiar.clicked.connect(self._copiar_texto)
         btn_row.addWidget(self.btn_copiar)
+
+        self.btn_alpheios = QPushButton("🏛 Alpheios")
+        self.btn_alpheios.setEnabled(False)
+        self.btn_alpheios.setToolTip(
+            "Análise morfológica da palavra seleccionada (Morpheus / Perseus)"
+        )
+        self.btn_alpheios.clicked.connect(self._on_alpheios)
+        btn_row.addWidget(self.btn_alpheios)
         btn_row.addStretch()
 
         self.lbl_pass_status = QLabel("")
@@ -909,6 +1010,7 @@ class PerseusOnlineWidget(QWidget):
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_copiar.setEnabled(False)
+        self.btn_alpheios.setEnabled(False)
 
     def _carregar_catalogo(self, forcar: bool = False):
         # Disconnect old thread to prevent stale signals from firing later
@@ -979,6 +1081,7 @@ class PerseusOnlineWidget(QWidget):
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
         self.btn_copiar.setEnabled(False)
+        self.btn_alpheios.setEnabled(False)
         self._atualizar_vozes_online()
         self._carregar_catalogo()
 
@@ -1114,6 +1217,7 @@ class PerseusOnlineWidget(QWidget):
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
+        self.btn_alpheios.setEnabled(False)  # hebraico não suportado
         ref_heb = d.get("ref_heb", d.get("ref", ""))
         self.lbl_pass_status.setText(f"✓ {ref_heb} — {len(texto.split())} palavras.")
 
@@ -1123,6 +1227,7 @@ class PerseusOnlineWidget(QWidget):
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
+        self.btn_alpheios.setEnabled(False)  # hebraico não suportado
         self.lbl_pass_status.setText(f"✓ {d.get('ref', '')} — {len(texto.split())} palavras.")
 
     def _on_passagem_pronta(self, texto: str):
@@ -1130,11 +1235,53 @@ class PerseusOnlineWidget(QWidget):
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
+        self.btn_alpheios.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
 
     def _on_passagem_erro(self, msg: str):
         self.texto_passagem.setPlainText(f"⚠ Erro ao carregar passagem:\n{msg}")
         self.lbl_pass_status.setText("⚠ Erro.")
+
+    # ── Alpheios ──────────────────────────────────────────────────────────────
+
+    def _on_alpheios(self):
+        word = self.texto_passagem.textCursor().selectedText().strip()
+        if not word:
+            QMessageBox.information(self, "Alpheios", "Seleccione uma palavra no texto.")
+            return
+        if ' ' in word:
+            word = word.split()[0]
+
+        lang = self.combo_lingua.currentData() or 'grc'
+        self.btn_alpheios.setEnabled(False)
+        self.btn_alpheios.setText("⏳ A analisar…")
+        self._alpheios_thr = AlpheiosMorphThread(word, lang)
+        self._alpheios_thr.pronto.connect(self._on_alpheios_pronto)
+        self._alpheios_thr.erro.connect(self._on_alpheios_erro)
+        self._alpheios_thr.start()
+
+    def _on_alpheios_pronto(self, json_text: str, word: str):
+        self.btn_alpheios.setEnabled(True)
+        self.btn_alpheios.setText("🏛 Alpheios")
+        resultado = _alpheios_parse(json_text)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Alpheios — {word}")
+        dlg.resize(420, 300)
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setFont(QFont("serif", 11))
+        txt.setPlainText(resultado)
+        lay.addWidget(txt)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(dlg.accept)
+        lay.addWidget(bb)
+        dlg.exec_()
+
+    def _on_alpheios_erro(self, msg: str):
+        self.btn_alpheios.setEnabled(True)
+        self.btn_alpheios.setText("🏛 Alpheios")
+        QMessageBox.warning(self, "Alpheios", f"Erro ao contactar API:\n{msg}")
 
     # ── ações do utilizador ───────────────────────────────────────────────────
 
@@ -1169,6 +1316,7 @@ class PerseusOnlineWidget(QWidget):
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
         self.btn_copiar.setEnabled(tem)
+        self.btn_alpheios.setEnabled(tem)
         palavras = len(texto.split())
         self.lbl_pass_status.setText(f"✓ Obra completa — {palavras} palavras.")
         # Selecciona amostra inicial → dispara selectionChanged →
