@@ -538,20 +538,16 @@ class BuscaOnlineWidget(QWidget):
         left = QWidget(); ll = QVBoxLayout(left)
         ll.setContentsMargins(0,0,4,0); ll.setSpacing(4)
 
-        fr = QHBoxLayout(); fr.addWidget(QLabel("Fonte:"))
-        self.combo_fonte = QComboBox()
-        if _PERSEUS_OK:
-            self.combo_fonte.addItem("Perseus (grc/lat)", "perseus")
-        if _SEFARIA_OK:
-            self.combo_fonte.addItem("Sefaria (hebraico)", "sefaria")
-        if not _PERSEUS_OK and not _SEFARIA_OK:
-            self.combo_fonte.addItem("(módulos não encontrados)", "")
-        self.combo_fonte.currentIndexChanged.connect(self._on_fonte_mudada)
-        fr.addWidget(self.combo_fonte)
+        fr = QHBoxLayout(); fr.addWidget(QLabel("Língua:"))
 
         self.combo_lingua_perc = QComboBox()
-        self.combo_lingua_perc.addItem("Grego (grc)", "grc")
-        self.combo_lingua_perc.addItem("Latim (lat)", "lat")
+        if _PERSEUS_OK:
+            self.combo_lingua_perc.addItem("Grego Antigo (grc)", "grc")
+            self.combo_lingua_perc.addItem("Latim (lat)",        "lat")
+        if _SEFARIA_OK:
+            self.combo_lingua_perc.addItem("Hebraico (hbo)",     "hbo")
+        if not _PERSEUS_OK and not _SEFARIA_OK:
+            self.combo_lingua_perc.addItem("(módulos não encontrados)", "")
         self.combo_lingua_perc.currentIndexChanged.connect(self._on_lingua_mudada)
         fr.addWidget(self.combo_lingua_perc)
 
@@ -655,7 +651,12 @@ class BuscaOnlineWidget(QWidget):
 
     # ── catalogo ──────────────────────────────────────────────────────────────
 
-    def _fonte(self): return self.combo_fonte.currentData() or ""
+    def _fonte(self):
+        lingua = self.combo_lingua_perc.currentData() or ""
+        if lingua == "hbo":
+            return "sefaria" if _SEFARIA_OK else ""
+        return "perseus" if _PERSEUS_OK else ""
+
     def _lingua_perc(self): return self.combo_lingua_perc.currentData() or "grc"
 
     def _carregar_catalogo(self, forcar=False):
@@ -697,21 +698,18 @@ class BuscaOnlineWidget(QWidget):
                 self.lista_obras.addItem(item)
         self.lista_obras.blockSignals(False)
 
-    def _on_fonte_mudada(self):
-        fonte = self._fonte()
-        self.combo_lingua_perc.setVisible(fonte == "perseus")
-        self.combo_cat_sef.setVisible(fonte == "sefaria")
+    def _on_lingua_mudada(self):
+        lingua = self.combo_lingua_perc.currentData() or ""
+        hbo = (lingua == "hbo")
+        self.combo_cat_sef.setVisible(hbo)
         self.texto_passagem.setLayoutDirection(
-            Qt.LayoutDirection.RightToLeft if fonte == "sefaria"
+            Qt.LayoutDirection.RightToLeft if hbo
             else Qt.LayoutDirection.LeftToRight)
         self.filtro.clear(); self._obras = []
+        self.combo_refs.clear(); self.texto_passagem.clear()
+        self._set_botoes_passagem(False)
         self._atualizar_vozes_b()
         self._carregar_catalogo()
-
-    def _on_lingua_mudada(self):
-        self.filtro.clear(); self._obras = []; self.combo_refs.clear()
-        self.texto_passagem.clear(); self._set_botoes_passagem(False)
-        self._atualizar_vozes_b(); self._carregar_catalogo()
 
     def _on_cat_sef_mudada(self): self._on_lingua_mudada()
 
@@ -802,7 +800,6 @@ class BuscaOnlineWidget(QWidget):
         return sel or self._ultimo_texto
 
     def _lingua_atual(self):
-        if self._fonte() == "sefaria": return "hbo"
         return self.combo_lingua_perc.currentData() or "grc"
 
     def _env_morfo(self):
@@ -851,8 +848,8 @@ class BuscaOnlineWidget(QWidget):
     # ── pronúncia ─────────────────────────────────────────────────────────────
 
     def _atualizar_vozes_b(self):
-        lingua = "hbo" if self._fonte()=="sefaria" else (
-            "grc" if self._lingua_atual()=="grc" else "la")
+        l = self.combo_lingua_perc.currentData() or "grc"
+        lingua = l if l == "hbo" else ("grc" if l == "grc" else "la")
         vozes = _vozes_para_lingua(lingua)
         self.combo_voz_b.blockSignals(True); self.combo_voz_b.clear()
         for vid,rot,*_ in vozes:
