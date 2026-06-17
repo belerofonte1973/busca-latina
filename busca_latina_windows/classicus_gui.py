@@ -373,6 +373,67 @@ class AlpheiosMorphThread(QThread):
             self.erro.emit(str(e))
 
 
+class AlpheiosLexThread(QThread):
+    """Busca definição lexicográfica via Alpheios (LSJ para grc, L&S para lat)."""
+    pronto = pyqtSignal(str, str)   # (definicao, lema)
+    erro   = pyqtSignal(str)
+
+    _LEX = {"grc": "lsj", "lat": "ls"}
+    _URL = ("http://repos1.alpheios.net/exist/rest/db/xq/"
+            "lexi-get.xq?lx={lx}&lg={lg}&out=html&l={l}")
+
+    def __init__(self, lema: str, lang: str):
+        super().__init__()
+        self._lema = lema.strip()
+        self._lang = lang
+
+    @staticmethod
+    def _limpar_html(html: str) -> str:
+        import re
+        html = re.sub(r"<[^>]+>", " ", html)
+        html = html.replace("&nbsp;", " ").replace("&amp;", "&").replace("&#160;", " ")
+        html = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), html)
+        lines = [l.strip() for l in html.splitlines()]
+        out, prev = [], True
+        for l in lines:
+            if not l:
+                if not prev: out.append("")
+                prev = True
+            else:
+                out.append(l); prev = False
+        return "\n".join(out).strip()
+
+    def run(self):
+        lx = self._LEX.get(self._lang, "ls")
+        url = self._URL.format(lx=lx, lg=self._lang,
+                               l=urllib.parse.quote(self._lema))
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "text/html",
+                                                       "User-Agent": "Classicus/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                html = r.read().decode("utf-8", errors="replace")
+            texto = self._limpar_html(html)
+            self.pronto.emit(texto, self._lema)
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+def _alpheios_lema(json_text: str) -> str:
+    """Extrai o primeiro lema da resposta JSON do Alpheios."""
+    try:
+        d = json.loads(json_text)
+        body = d["RDF"]["Annotation"].get("Body", [])
+        if isinstance(body, dict): body = [body]
+        for b in body:
+            entry = b.get("rest", {}).get("entry", {})
+            hdwd = entry.get("dict", {}).get("hdwd", {})
+            lema = hdwd.get("$", "") if isinstance(hdwd, dict) else str(hdwd)
+            if lema: return lema
+    except Exception:
+        pass
+    return ""
+
+
 def _alpheios_parse(json_text: str) -> str:
     try:
         d = json.loads(json_text)
@@ -640,6 +701,8 @@ class BuscaOnlineWidget(QWidget):
         # API.Bible
         self._abiblia_id      = ""   # Bible version ID
         self._ab_livro_id     = ""   # Book ID
+        self._alph_thr        = None
+        self._lex_thr         = None
         self._build()
 
     def _build(self):
@@ -720,10 +783,22 @@ class BuscaOnlineWidget(QWidget):
         self.combo_refs.currentIndexChanged.connect(self._carregar_passagem)
         ref_row.addWidget(self.combo_refs, 1); rl.addLayout(ref_row)
 
+        self._vsplit_texto = QSplitter(Qt.Orientation.Vertical)
+
         self.texto_passagem = QTextEdit()
         self.texto_passagem.setReadOnly(True)
         self.texto_passagem.setFont(QFont(_SERIF, 11))
-        rl.addWidget(self.texto_passagem, 1)
+        self.texto_passagem.mouseDoubleClickEvent = self._on_dblclick_texto
+        self._vsplit_texto.addWidget(self.texto_passagem)
+
+        self.alph_panel = QTextEdit()
+        self.alph_panel.setReadOnly(True)
+        self.alph_panel.setFont(QFont(_MONO, 10))
+        self.alph_panel.setPlaceholderText(
+            "Alpheios — duplo clique numa palavra (grc/lat) para análise morfológica inline")
+        self._vsplit_texto.addWidget(self.alph_panel)
+        self._vsplit_texto.setSizes([500, 0])
+        rl.addWidget(self._vsplit_texto, 1)
 
         # ── barra de ações ────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -744,7 +819,9 @@ class BuscaOnlineWidget(QWidget):
 
         self.btn_alpheios = QPushButton("🏛 Alpheios")
         self.btn_alpheios.setEnabled(False)
-        self.btn_alpheios.setToolTip("Análise morfológica da palavra selecionada (online)")
+        self.btn_alpheios.setToolTip(
+            "Análise morfológica da palavra selecionada via Alpheios API (grc/lat)\n"
+            "Atalho: duplo clique na palavra")
         self.btn_alpheios.clicked.connect(self._on_alpheios)
         btn_row.addWidget(self.btn_alpheios)
 
@@ -1195,15 +1272,37 @@ class BuscaOnlineWidget(QWidget):
                                   QMessageBox.warning(self,"Alpheios",e)))
         self._alph_thr = t; t.start()
 
+    def _on_dblclick_texto(self, event):
+        QTextEdit.mouseDoubleClickEvent(self.texto_passagem, event)
+        lang = self._lingua_atual()
+        if lang in ("grc", "la", "lat"):
+            self._on_alpheios()
+
     def _on_alph_pronto(self, json_text, word):
         self.btn_alpheios.setEnabled(True); self.btn_alpheios.setText("🏛 Alpheios")
         resultado = _alpheios_parse(json_text)
-        dlg = QDialog(self); dlg.setWindowTitle(f"Alpheios — {word}"); dlg.resize(420,280)
-        lay = QVBoxLayout(dlg)
-        txt = QTextEdit(); txt.setReadOnly(True)
-        txt.setFont(QFont(_SERIF,11)); txt.setPlainText(resultado); lay.addWidget(txt)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        bb.rejected.connect(dlg.accept); lay.addWidget(bb); dlg.exec()
+        self.alph_panel.setPlainText(f"Alpheios — {word}\n\n{resultado}")
+        sizes = self._vsplit_texto.sizes()
+        total = sum(sizes)
+        panel_h = min(200, max(140, total // 3))
+        self._vsplit_texto.setSizes([total - panel_h, panel_h])
+        # Dispara lookup lexicográfico com o lema detectado
+        lema = _alpheios_lema(json_text)
+        if lema:
+            lang = self._lingua_atual()
+            lg = "grc" if lang == "grc" else "lat"
+            if self._lex_thr and self._lex_thr.isRunning():
+                self._lex_thr.terminate()
+            self._lex_thr = AlpheiosLexThread(lema, lg)
+            self._lex_thr.pronto.connect(self._on_lex_pronto)
+            self._lex_thr.erro.connect(lambda _: None)  # silencioso se léxico offline
+            self._lex_thr.start()
+
+    def _on_lex_pronto(self, definicao: str, lema: str):
+        if not definicao.strip(): return
+        atual = self.alph_panel.toPlainText()
+        sep = "\n" + "─" * 40 + "\n"
+        self.alph_panel.setPlainText(atual + sep + f"Léxico ({lema}):\n\n{definicao[:1200]}")
 
     # ── pronúncia ─────────────────────────────────────────────────────────────
 
@@ -1413,6 +1512,23 @@ class MorfologiaWidget(QWidget):
         resultado = _alpheios_parse(json_text)
         self.analise_out.setPlainText(f"Alpheios — {word}\n\n{resultado}")
         self._status_cb(f"✓ Alpheios: {word}")
+        # Lookup lexicográfico automático
+        lema = _alpheios_lema(json_text)
+        if lema:
+            lingua = self._lingua()
+            lg = "grc" if lingua == "grc" else "lat"
+            if hasattr(self, "_lex_thr") and self._lex_thr and self._lex_thr.isRunning():
+                self._lex_thr.terminate()
+            self._lex_thr = AlpheiosLexThread(lema, lg)
+            self._lex_thr.pronto.connect(self._on_lex_pronto_m)
+            self._lex_thr.erro.connect(lambda _: None)
+            self._lex_thr.start()
+
+    def _on_lex_pronto_m(self, definicao: str, lema: str):
+        if not definicao.strip(): return
+        atual = self.analise_out.toPlainText()
+        sep = "\n" + "─" * 40 + "\n"
+        self.analise_out.setPlainText(atual + sep + f"Léxico ({lema}):\n\n{definicao[:1200]}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
