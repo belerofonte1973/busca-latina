@@ -811,7 +811,8 @@ def _alpheios_parse(json_text: str) -> str:
 class PerseusOnlineWidget(QWidget):
     """Navegador de textos online: Perseus (grc/lat), Sefaria (heb), API.Bible (heb)."""
 
-    traduzir_pedido = pyqtSignal(str, str)   # (texto, lingua)
+    traduzir_pedido        = pyqtSignal(str, str)   # (texto, lingua)
+    traduzir_ollama_pedido = pyqtSignal(str, str)   # (texto, lingua) — offline
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -949,6 +950,15 @@ class PerseusOnlineWidget(QWidget):
         self.btn_traduzir.clicked.connect(self._on_traduzir)
         btn_row.addWidget(self.btn_traduzir)
 
+        self.btn_traduzir_ollama = QPushButton("🤖 Ollama →PT")
+        self.btn_traduzir_ollama.setEnabled(False)
+        self.btn_traduzir_ollama.setToolTip(
+            "Traduz o texto seleccionado com IA local (Ollama) — sem internet\n"
+            "Requer: ollama serve  +  ollama pull llama3.2"
+        )
+        self.btn_traduzir_ollama.clicked.connect(self._on_traduzir_ollama)
+        btn_row.addWidget(self.btn_traduzir_ollama)
+
         self.btn_copiar = QPushButton("Copiar texto")
         self.btn_copiar.setEnabled(False)
         self.btn_copiar.clicked.connect(self._copiar_texto)
@@ -1040,6 +1050,7 @@ class PerseusOnlineWidget(QWidget):
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
+        self.btn_traduzir_ollama.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.btn_alpheios.setEnabled(False)
 
@@ -1111,6 +1122,7 @@ class PerseusOnlineWidget(QWidget):
         self.lbl_obra_sel.setText("<i>(nenhuma obra selecionada)</i>")
         self.btn_obra_completa.setEnabled(False)
         self.btn_traduzir.setEnabled(False)
+        self.btn_traduzir_ollama.setEnabled(False)
         self.btn_copiar.setEnabled(False)
         self.btn_alpheios.setEnabled(False)
         self._atualizar_vozes_online()
@@ -1247,6 +1259,7 @@ class PerseusOnlineWidget(QWidget):
         self.texto_passagem.setPlainText(texto)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
+        self.btn_traduzir_ollama.setEnabled(tem and _OLLAMA_OK)
         self.btn_copiar.setEnabled(tem)
         self.btn_alpheios.setEnabled(False)  # hebraico não suportado
         ref_heb = d.get("ref_heb", d.get("ref", ""))
@@ -1257,6 +1270,7 @@ class PerseusOnlineWidget(QWidget):
         self.texto_passagem.setPlainText(texto)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
+        self.btn_traduzir_ollama.setEnabled(tem and _OLLAMA_OK)
         self.btn_copiar.setEnabled(tem)
         self.btn_alpheios.setEnabled(False)  # hebraico não suportado
         self.lbl_pass_status.setText(f"✓ {d.get('ref', '')} — {len(texto.split())} palavras.")
@@ -1265,6 +1279,7 @@ class PerseusOnlineWidget(QWidget):
         self.texto_passagem.setPlainText(texto)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
+        self.btn_traduzir_ollama.setEnabled(tem and _OLLAMA_OK)
         self.btn_copiar.setEnabled(tem)
         self.btn_alpheios.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ {len(texto.split())} palavras.")
@@ -1343,6 +1358,7 @@ class PerseusOnlineWidget(QWidget):
         self.btn_obra_completa.setEnabled(True)
         tem = bool(texto.strip())
         self.btn_traduzir.setEnabled(tem)
+        self.btn_traduzir_ollama.setEnabled(tem and _OLLAMA_OK)
         self.btn_copiar.setEnabled(tem)
         self.btn_alpheios.setEnabled(tem)
         self.lbl_pass_status.setText(f"✓ Obra completa — {len(texto.split())} palavras.")
@@ -1367,6 +1383,11 @@ class PerseusOnlineWidget(QWidget):
         texto = self._texto_activo()
         if texto:
             self.traduzir_pedido.emit(texto, self._lingua_traducao())
+
+    def _on_traduzir_ollama(self):
+        texto = self._texto_activo()
+        if texto:
+            self.traduzir_ollama_pedido.emit(texto, self._lingua_traducao())
 
     def _copiar_texto(self):
         QApplication.clipboard().setText(self.texto_passagem.toPlainText())
@@ -1845,6 +1866,7 @@ class BuscaLatina(QMainWindow):
         if _PERSEUS_API_OK or _SEFARIA_OK or _APIBIBLE_OK:
             self._perseus_widget = PerseusOnlineWidget(self)
             self._perseus_widget.traduzir_pedido.connect(self._traduzir_texto_online)
+            self._perseus_widget.traduzir_ollama_pedido.connect(self._traduzir_ollama_online)
             self._perseus_widget.texto_passagem.selectionChanged.connect(
                 self._on_selecao_dialog_mudada
             )
@@ -1861,6 +1883,12 @@ class BuscaLatina(QMainWindow):
         destino = (self._perseus_widget.trans_out_online
                    if self._perseus_widget is not None else self.trans_out)
         self._lancar_gemini(texto, lingua, destino=destino)
+
+    def _traduzir_ollama_online(self, texto: str, lingua: str = "la"):
+        self._selecao_salva = texto
+        destino = (self._perseus_widget.trans_out_online
+                   if self._perseus_widget is not None else self.trans_out)
+        self._lancar_ollama(texto, lingua, destino=destino)
 
     def _on_selecao_dialog_mudada(self):
         if self._perseus_widget is None:
@@ -2211,6 +2239,48 @@ class BuscaLatina(QMainWindow):
     def _lingua_ollama(self) -> str:
         return ("la", "grc", "hbo")[min(self.combo_lingua.currentIndex(), 2)]
 
+    def _lancar_ollama(self, texto: str, lingua: str, destino=None, modo: str = "traduzir"):
+        """Lança tradução Ollama para texto fornecido directamente (com destino opcional)."""
+        destino = destino or self.trans_out
+        if not _OLLAMA_OK:
+            destino.setPlainText("⚠ ollama_lat.py não encontrado.")
+            return
+        if not texto.strip():
+            destino.setPlainText("⚠ Nenhum texto fornecido.")
+            return
+        modelo = self._modelo_ollama()
+        lingua_real = "comentario" if modo == "comentario" else lingua
+
+        cached = self._cache_verificar(texto, lingua_real, modelo)
+        if cached:
+            destino.setPlainText(cached)
+            self.status_bar.showMessage("✓ Tradução do histórico.")
+            return
+
+        if self._ollama_thread is not None and self._ollama_thread.isRunning():
+            self._ollama_thread.stop()
+            self._ollama_thread.wait(1000)
+
+        rotulo = "Comentário" if modo == "comentario" else "Tradução →PT"
+        destino.setPlainText(
+            f"⏳ {rotulo} com {modelo or 'phi3'}…\n\n"
+            f"(1.ª vez pode demorar 30–60 s enquanto o modelo carrega)"
+        )
+        self._ollama_thread = OllamaThread(texto, lingua_real, modelo)
+        self._ollama_thread.chunk.connect(
+            lambda frag, d=destino: self._append_chunk(frag, d))
+        self._ollama_thread.done.connect(
+            lambda: (
+                self._cache_guardar(texto, lingua_real, modelo, destino.toPlainText()),
+                self.status_bar.showMessage("✓ Tradução IA concluída."),
+            )
+        )
+        self._ollama_thread.erro.connect(
+            lambda e, d=destino: d.setPlainText(f"⚠ Erro Ollama: {e}")
+        )
+        self._ollama_thread.start()
+        self.status_bar.showMessage("Ollama a processar…")
+
     def _iniciar_ollama(self, modo: str):
         if not _OLLAMA_OK:
             self.trans_out.setPlainText("⚠ ollama_lat.py não encontrado.")
@@ -2221,37 +2291,7 @@ class BuscaLatina(QMainWindow):
                 "⚠ Nenhum texto seleccionado.\nSeleccione texto nos resultados e clique novamente."
             )
             return
-        modelo = self._modelo_ollama()
-        lingua = "comentario" if modo == "comentario" else self._lingua_ollama()
-
-        cached = self._cache_verificar(texto, lingua, modelo)
-        if cached:
-            self.trans_out.setPlainText(cached)
-            self.status_bar.showMessage("✓ Tradução do histórico.")
-            return
-
-        if self._ollama_thread is not None and self._ollama_thread.isRunning():
-            self._ollama_thread.stop()
-            self._ollama_thread.wait(1000)
-
-        rotulo = "Comentário" if modo == "comentario" else "Tradução →PT"
-        self.trans_out.setPlainText(
-            f"⏳ {rotulo} com {modelo or 'phi3'}…\n\n"
-            f"(1.ª vez pode demorar 30–60 s enquanto o modelo carrega)"
-        )
-        self._ollama_thread = OllamaThread(texto, lingua, modelo)
-        self._ollama_thread.chunk.connect(self._on_ollama_chunk)
-        self._ollama_thread.done.connect(
-            lambda: (
-                self._cache_guardar(texto, lingua, modelo, self.trans_out.toPlainText()),
-                self.status_bar.showMessage("✓ Tradução IA concluída."),
-            )
-        )
-        self._ollama_thread.erro.connect(
-            lambda e: self.trans_out.setPlainText(f"⚠ Erro Ollama: {e}")
-        )
-        self._ollama_thread.start()
-        self.status_bar.showMessage("Ollama a processar…")
+        self._lancar_ollama(texto, self._lingua_ollama(), destino=self.trans_out, modo=modo)
 
     def _append_chunk(self, frag: str, destino=None):
         d = destino or self.trans_out
