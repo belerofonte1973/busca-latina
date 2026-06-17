@@ -91,6 +91,24 @@ except ImportError:
     _SEFARIA_OK = False
 
 try:
+    import latinlib_api as _llapi
+    _LATINLIB_OK = True
+except ImportError:
+    _LATINLIB_OK = False
+
+try:
+    import phi_api as _phiapi
+    _PHI_OK = True
+except ImportError:
+    _PHI_OK = False
+
+try:
+    import apibible_api as _abapi
+    _APIBIBLE_OK = True
+except ImportError:
+    _APIBIBLE_OK = False
+
+try:
     from gemini_lat import (traduzir_stream as _gemini_traduzir_stream,
                              MODELOS_GEMINI as _MODELOS_GEMINI)
     _GEMINI_OK = True
@@ -480,6 +498,87 @@ class SefariaThread(QThread):
         except Exception as e: self.erro.emit(str(e))
 
 
+# ── Latin Library threads ─────────────────────────────────────────────────────
+
+class LatinLibCatThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def __init__(self, forcar=False): super().__init__(); self._forcar=forcar
+    def run(self):
+        try: self.pronto.emit(_llapi.obter_catalogo(self._forcar))
+        except Exception as e: self.erro.emit(str(e))
+
+class LatinLibObrasThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def __init__(self, item: dict): super().__init__(); self._item=item
+    def run(self):
+        try:
+            tipo = self._item.get("tipo","")
+            if tipo == "local_dir":
+                self.pronto.emit(_llapi.obter_sub_obras(self._item))
+            elif tipo == "online_author":
+                self.pronto.emit(_llapi.obter_obras_online(self._item["url"]))
+            else:
+                self.pronto.emit([])
+        except Exception as e: self.erro.emit(str(e))
+
+class LatinLibTextThread(QThread):
+    pronto = pyqtSignal(str); erro = pyqtSignal(str)
+    def __init__(self, item: dict): super().__init__(); self._item=item
+    def run(self):
+        try: self.pronto.emit(_llapi.obter_texto(self._item))
+        except Exception as e: self.erro.emit(str(e))
+
+
+# ── PHI Latin threads ─────────────────────────────────────────────────────────
+
+class PhiCatThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def run(self):
+        try: self.pronto.emit(_phiapi.obter_catalogo_flat())
+        except Exception as e: self.erro.emit(str(e))
+
+class PhiTextThread(QThread):
+    pronto = pyqtSignal(str); erro = pyqtSignal(str)
+    def __init__(self, autor_id: str, obra_id: str):
+        super().__init__(); self._aid=autor_id; self._oid=obra_id
+    def run(self):
+        try: self.pronto.emit(_phiapi.obter_texto(self._aid, self._oid))
+        except Exception as e: self.erro.emit(str(e))
+
+
+# ── API.Bible threads ─────────────────────────────────────────────────────────
+
+class ApibibleBibliaThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def __init__(self, forcar=False): super().__init__(); self._forcar=forcar
+    def run(self):
+        try: self.pronto.emit(_abapi.listar_biblias_heb(self._forcar))
+        except Exception as e: self.erro.emit(str(e))
+
+class ApibibleLivrosThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def __init__(self, biblia_id: str): super().__init__(); self._bid=biblia_id
+    def run(self):
+        try: self.pronto.emit(_abapi.listar_livros(self._bid))
+        except Exception as e: self.erro.emit(str(e))
+
+class ApibibleCapsThread(QThread):
+    pronto = pyqtSignal(list); erro = pyqtSignal(str)
+    def __init__(self, biblia_id: str, livro_id: str):
+        super().__init__(); self._bid=biblia_id; self._lid=livro_id
+    def run(self):
+        try: self.pronto.emit(_abapi.listar_capitulos(self._bid, self._lid))
+        except Exception as e: self.erro.emit(str(e))
+
+class ApibiblePassThread(QThread):
+    pronto = pyqtSignal(dict); erro = pyqtSignal(str)
+    def __init__(self, biblia_id: str, passagem_id: str):
+        super().__init__(); self._bid=biblia_id; self._pid=passagem_id
+    def run(self):
+        try: self.pronto.emit(_abapi.obter_passagem(self._bid, self._pid))
+        except Exception as e: self.erro.emit(str(e))
+
+
 class GeminiThread(QThread):
     chunk  = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -524,10 +623,23 @@ class BuscaOnlineWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._obras = []; self._cat_thr = None; self._refs_thr = None
-        self._pass_thr = None; self._edicao_urn = ""; self._pron_thr = None
-        self._ultimo_texto = ""; self._reiniciar_timer = None
-        self._sefaria_titulo = ""
+        self._obras           = []
+        self._cat_thr         = None
+        self._refs_thr        = None
+        self._pass_thr        = None
+        self._edicao_urn      = ""
+        self._pron_thr        = None
+        self._ultimo_texto    = ""
+        self._reiniciar_timer = None
+        self._sefaria_titulo  = ""
+        # Latin Library
+        self._ll_item         = {}   # item do catálogo LL seleccionado
+        # PHI
+        self._phi_autor_id    = ""
+        self._phi_obra_id     = ""
+        # API.Bible
+        self._abiblia_id      = ""   # Bible version ID
+        self._ab_livro_id     = ""   # Book ID
         self._build()
 
     def _build(self):
@@ -541,22 +653,41 @@ class BuscaOnlineWidget(QWidget):
         fr = QHBoxLayout(); fr.addWidget(QLabel("Língua:"))
 
         self.combo_lingua_perc = QComboBox()
+        _tem_lat = _PERSEUS_OK or _LATINLIB_OK or _PHI_OK
         if _PERSEUS_OK:
             self.combo_lingua_perc.addItem("Grego Antigo (grc)", "grc")
-            self.combo_lingua_perc.addItem("Latim (lat)",        "lat")
-        if _SEFARIA_OK:
-            self.combo_lingua_perc.addItem("Hebraico (hbo)",     "hbo")
-        if not _PERSEUS_OK and not _SEFARIA_OK:
+        if _tem_lat:
+            self.combo_lingua_perc.addItem("Latim (lat)", "lat")
+        if _SEFARIA_OK or _APIBIBLE_OK:
+            self.combo_lingua_perc.addItem("Hebraico (hbo)", "hbo")
+        if self.combo_lingua_perc.count() == 0:
             self.combo_lingua_perc.addItem("(módulos não encontrados)", "")
         self.combo_lingua_perc.currentIndexChanged.connect(self._on_lingua_mudada)
         fr.addWidget(self.combo_lingua_perc)
 
+        fr.addWidget(_sep_v())
+        fr.addWidget(QLabel("Fonte:"))
+        self.combo_fonte = QComboBox(); self.combo_fonte.setMinimumWidth(160)
+        self.combo_fonte.currentIndexChanged.connect(self._on_fonte_mudada)
+        fr.addWidget(self.combo_fonte)
+
+        # Categoria Sefaria (visível só para fonte=sefaria)
         self.combo_cat_sef = QComboBox()
         for cat in ["Tanakh","Talmud","Midrash","Halakhah","Liturgy"]:
             self.combo_cat_sef.addItem(cat, cat)
         self.combo_cat_sef.currentIndexChanged.connect(self._on_cat_sef_mudada)
         self.combo_cat_sef.hide()
         fr.addWidget(self.combo_cat_sef)
+
+        # API.Bible: versão da Bíblia + chave (visíveis só para fonte=apibible)
+        self.combo_biblia = QComboBox(); self.combo_biblia.setMinimumWidth(150)
+        self.combo_biblia.currentIndexChanged.connect(self._on_biblia_mudada)
+        self.combo_biblia.hide(); fr.addWidget(self.combo_biblia)
+
+        self.btn_ab_chave = QPushButton("🔑 Chave")
+        self.btn_ab_chave.setToolTip("Configurar chave gratuita da API.Bible (scripture.api.bible)")
+        self.btn_ab_chave.clicked.connect(self._on_apibible_chave)
+        self.btn_ab_chave.hide(); fr.addWidget(self.btn_ab_chave)
 
         fr.addStretch()
         btn_reload = QPushButton("⟳"); btn_reload.setFixedWidth(30)
@@ -646,25 +777,101 @@ class BuscaOnlineWidget(QWidget):
 
         split.addWidget(right); split.setSizes([280, 720])
         root.addWidget(split, 1)
+        # Inicializar combo_fonte com a língua padrão
+        lingua_inicial = self.combo_lingua_perc.currentData() or "grc"
+        self._preencher_combo_fonte(lingua_inicial)
+        self._atualizar_controles_fonte()
         self._atualizar_vozes_b()
         self._carregar_catalogo()
 
-    # ── catalogo ──────────────────────────────────────────────────────────────
+    # ── catálogo ──────────────────────────────────────────────────────────────
 
     def _fonte(self):
-        lingua = self.combo_lingua_perc.currentData() or ""
-        if lingua == "hbo":
-            return "sefaria" if _SEFARIA_OK else ""
-        return "perseus" if _PERSEUS_OK else ""
+        return self.combo_fonte.currentData() or ""
 
     def _lingua_perc(self): return self.combo_lingua_perc.currentData() or "grc"
+
+    def _preencher_combo_fonte(self, lingua: str) -> None:
+        """Atualiza as opções do combo_fonte conforme a língua selecionada."""
+        self.combo_fonte.blockSignals(True)
+        self.combo_fonte.clear()
+        if lingua == "grc":
+            if _PERSEUS_OK:
+                self.combo_fonte.addItem("Perseus", "perseus")
+        elif lingua == "lat":
+            if _PERSEUS_OK:
+                self.combo_fonte.addItem("Perseus", "perseus")
+            if _LATINLIB_OK:
+                label = "Latin Library (local)" if _llapi.tem_local() else "Latin Library (online)"
+                self.combo_fonte.addItem(label, "latinlib")
+            if _PHI_OK:
+                self.combo_fonte.addItem("PHI Latin (Diogenes)", "phi")
+        elif lingua == "hbo":
+            if _SEFARIA_OK:
+                self.combo_fonte.addItem("Sefaria", "sefaria")
+            if _APIBIBLE_OK:
+                self.combo_fonte.addItem("API.Bible", "apibible")
+        self.combo_fonte.blockSignals(False)
+
+    def _atualizar_controles_fonte(self) -> None:
+        """Mostra/oculta controlos secundários conforme a fonte."""
+        fonte = self._fonte()
+        lingua = self._lingua_perc()
+        hbo = (lingua == "hbo")
+        # Sefaria: categoria
+        self.combo_cat_sef.setVisible(fonte == "sefaria")
+        # API.Bible: versão + chave
+        self.combo_biblia.setVisible(fonte == "apibible")
+        self.btn_ab_chave.setVisible(fonte == "apibible")
+        # Layout RTL apenas para hebraico
+        self.texto_passagem.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft if hbo
+            else Qt.LayoutDirection.LeftToRight)
+
+    def _on_lingua_mudada(self):
+        lingua = self.combo_lingua_perc.currentData() or ""
+        self._preencher_combo_fonte(lingua)
+        self._atualizar_controles_fonte()
+        self.filtro.clear(); self._obras = []
+        self.combo_refs.clear(); self.texto_passagem.clear()
+        self._set_botoes_passagem(False)
+        self._atualizar_vozes_b()
+        # Pré-carregar versões API.Bible se necessário
+        if self._fonte() == "apibible" and not self.combo_biblia.count():
+            self._carregar_biblias_api()
+        else:
+            self._carregar_catalogo()
+
+    def _on_fonte_mudada(self):
+        self._atualizar_controles_fonte()
+        self.filtro.clear(); self._obras = []
+        self.combo_refs.clear(); self.texto_passagem.clear()
+        self._set_botoes_passagem(False)
+        self._atualizar_vozes_b()
+        fonte = self._fonte()
+        if fonte == "apibible":
+            if not self.combo_biblia.count():
+                self._carregar_biblias_api()
+            elif self.combo_biblia.currentData():
+                self._carregar_catalogo()
+        else:
+            self._carregar_catalogo()
+
+    def _on_cat_sef_mudada(self):
+        self.filtro.clear(); self._obras = []
+        self.combo_refs.clear(); self.texto_passagem.clear()
+        self._set_botoes_passagem(False)
+        self._carregar_catalogo()
+
+    # ── carregar catálogo ─────────────────────────────────────────────────────
 
     def _carregar_catalogo(self, forcar=False):
         fonte = self._fonte()
         self.lista_obras.clear(); self.combo_refs.clear()
         self.texto_passagem.clear(); self._obras = []
         self._set_botoes_passagem(False)
-        if not fonte: return
+        if not fonte:
+            return
         if fonte == "perseus":
             self.lbl_cat.setText("⏳ Carregando catálogo Perseus…")
             self._cat_thr = PercCatalogThread(self._lingua_perc(), forcar)
@@ -678,6 +885,28 @@ class BuscaOnlineWidget(QWidget):
             t.catalogo.connect(self._on_cat_pronto_sef)
             t.erro.connect(lambda e: self.lbl_cat.setText(f"⚠ {e}"))
             self._cat_thr = t; t.start()
+        elif fonte == "latinlib":
+            self.lbl_cat.setText("⏳ Carregando Latin Library…")
+            t = LatinLibCatThread(forcar)
+            t.pronto.connect(self._on_cat_pronto)
+            t.erro.connect(lambda e: self.lbl_cat.setText(f"⚠ {e}"))
+            self._cat_thr = t; t.start()
+        elif fonte == "phi":
+            self.lbl_cat.setText("⏳ Carregando catálogo PHI Latin…")
+            t = PhiCatThread()
+            t.pronto.connect(self._on_cat_pronto)
+            t.erro.connect(lambda e: self.lbl_cat.setText(f"⚠ {e}"))
+            self._cat_thr = t; t.start()
+        elif fonte == "apibible":
+            bid = self.combo_biblia.currentData()
+            if not bid:
+                self.lbl_cat.setText("⚠ Selecione uma versão bíblica no combo acima.")
+                return
+            self.lbl_cat.setText(f"⏳ Carregando livros API.Bible…")
+            t = ApibibleLivrosThread(bid)
+            t.pronto.connect(self._on_cat_pronto_ab)
+            t.erro.connect(lambda e: self.lbl_cat.setText(f"⚠ API.Bible: {e}"))
+            self._cat_thr = t; t.start()
 
     def _on_cat_pronto(self, obras):
         self._obras = obras; self._filtrar(self.filtro.text())
@@ -686,6 +915,12 @@ class BuscaOnlineWidget(QWidget):
     def _on_cat_pronto_sef(self, obras):
         self._obras = obras; self._filtrar(self.filtro.text())
         self.lbl_cat.setText(f"✓ {len(obras)} textos disponíveis.")
+
+    def _on_cat_pronto_ab(self, livros):
+        obras = [{"display": l["nome"], "id": l["id"],
+                  "edicao_urn": f"apibible:{l['id']}"} for l in livros]
+        self._obras = obras; self._filtrar(self.filtro.text())
+        self.lbl_cat.setText(f"✓ {len(obras)} livros disponíveis.")
 
     def _filtrar(self, q=""):
         self.lista_obras.blockSignals(True); self.lista_obras.clear()
@@ -698,20 +933,48 @@ class BuscaOnlineWidget(QWidget):
                 self.lista_obras.addItem(item)
         self.lista_obras.blockSignals(False)
 
-    def _on_lingua_mudada(self):
-        lingua = self.combo_lingua_perc.currentData() or ""
-        hbo = (lingua == "hbo")
-        self.combo_cat_sef.setVisible(hbo)
-        self.texto_passagem.setLayoutDirection(
-            Qt.LayoutDirection.RightToLeft if hbo
-            else Qt.LayoutDirection.LeftToRight)
-        self.filtro.clear(); self._obras = []
-        self.combo_refs.clear(); self.texto_passagem.clear()
-        self._set_botoes_passagem(False)
-        self._atualizar_vozes_b()
+    # ── API.Bible: Bíblias disponíveis ────────────────────────────────────────
+
+    def _carregar_biblias_api(self):
+        if not _APIBIBLE_OK: return
+        key = _abapi.obter_chave()
+        if not key:
+            self.lbl_cat.setText(
+                "⚠ API.Bible: configure a chave gratuita clicando em 🔑 Chave")
+            return
+        self.lbl_cat.setText("⏳ Carregando versões da API.Bible…")
+        t = ApibibleBibliaThread()
+        t.pronto.connect(self._on_biblias_prontas)
+        t.erro.connect(lambda e: self.lbl_cat.setText(f"⚠ API.Bible: {e}"))
+        self._cat_thr = t; t.start()
+
+    def _on_biblias_prontas(self, biblias: list):
+        self.combo_biblia.blockSignals(True); self.combo_biblia.clear()
+        for b in biblias:
+            self.combo_biblia.addItem(b["nome"], b["id"])
+        self.combo_biblia.blockSignals(False)
+        if biblias:
+            self._carregar_catalogo()
+        else:
+            self.lbl_cat.setText("⚠ Nenhuma Bíblia hebraica disponível com esta chave.")
+
+    def _on_biblia_mudada(self):
+        self._abiblia_id = self.combo_biblia.currentData() or ""
         self._carregar_catalogo()
 
-    def _on_cat_sef_mudada(self): self._on_lingua_mudada()
+    def _on_apibible_chave(self):
+        if not _APIBIBLE_OK: return
+        atual = _abapi.obter_chave()
+        nova, ok = QInputDialog.getText(
+            self, "Chave API.Bible",
+            "Cole a chave gratuita de scripture.api.bible:",
+            text=atual or "")
+        if ok and nova.strip():
+            _abapi.guardar_chave(nova.strip())
+            self.combo_biblia.clear()
+            self._carregar_biblias_api()
+
+    # ── obra selecionada ──────────────────────────────────────────────────────
 
     def _on_obra_sel(self, row):
         item = self.lista_obras.item(row)
@@ -721,19 +984,52 @@ class BuscaOnlineWidget(QWidget):
         self.combo_refs.clear(); self.combo_refs.addItem("(carregando…)","")
         self.lbl_pass_st.setText("Carregando…")
         fonte = self._fonte()
+        self.lbl_obra.setText(f"<b>{obra.get('display','')}</b>")
+
         if fonte == "sefaria":
-            self._sefaria_titulo = obra.get("titulo","")
-            self.lbl_obra.setText(f"<b>{obra.get('display','')}</b>")
+            self._sefaria_titulo = obra.get("titulo", obra.get("display",""))
             t = SefariaThread("refs", self._sefaria_titulo)
             t.refs.connect(self._on_sef_refs); t.erro.connect(self._on_refs_erro)
             self._refs_thr = t; t.start()
-        else:
+
+        elif fonte == "perseus":
             urn = obra.get("edicao_urn","")
             self._edicao_urn = urn
             self.lbl_obra.setText(
                 f"<b>{obra.get('display','')}</b><br><small>{urn}</small>")
             t = PercRefsThread(urn)
             t.pronto.connect(self._on_perc_refs); t.erro.connect(self._on_refs_erro)
+            self._refs_thr = t; t.start()
+
+        elif fonte == "latinlib":
+            tipo = obra.get("tipo","")
+            self._ll_item = obra
+            if tipo in ("local_dir", "online_author"):
+                # Carregar sub-obras
+                t = LatinLibObrasThread(obra)
+                t.pronto.connect(self._on_ll_obras); t.erro.connect(self._on_refs_erro)
+                self._refs_thr = t; t.start()
+            else:
+                # Ficheiro único: texto directo (sem refs intermédias)
+                self.combo_refs.clear()
+                self.combo_refs.addItem(obra.get("display","texto"), obra)
+                self.lbl_pass_st.setText("✓ obra única.")
+
+        elif fonte == "phi":
+            self._phi_autor_id = obra.get("autor_id","")
+            self._phi_obra_id  = obra.get("obra_id","")
+            # PHI usa catálogo flat: refs = 1 entrada
+            self.combo_refs.clear()
+            self.combo_refs.addItem(obra.get("display", "texto completo"), obra)
+            self.lbl_pass_st.setText("↵ Enter para carregar via Diogenes.")
+
+        elif fonte == "apibible":
+            self._ab_livro_id = obra.get("id","")
+            bid = self._abiblia_id or self.combo_biblia.currentData() or ""
+            if not bid:
+                self.lbl_pass_st.setText("⚠ Selecione uma versão bíblica."); return
+            t = ApibibleCapsThread(bid, self._ab_livro_id)
+            t.pronto.connect(self._on_ab_caps); t.erro.connect(self._on_refs_erro)
             self._refs_thr = t; t.start()
 
     def _on_perc_refs(self, refs):
@@ -752,8 +1048,26 @@ class BuscaOnlineWidget(QWidget):
         self.lbl_pass_st.setText(f"✓ {len(refs)} capítulos.")
         if refs: self._carregar_passagem()
 
+    def _on_ll_obras(self, obras):
+        self.combo_refs.blockSignals(True); self.combo_refs.clear()
+        for o in obras:
+            self.combo_refs.addItem(o.get("display","?"), o)
+        self.combo_refs.blockSignals(False)
+        self.lbl_pass_st.setText(f"✓ {len(obras)} obras.")
+        if obras: self._carregar_passagem()
+
+    def _on_ab_caps(self, caps):
+        self.combo_refs.blockSignals(True); self.combo_refs.clear()
+        for c in caps:
+            self.combo_refs.addItem(str(c.get("numero", c["id"])), c["id"])
+        self.combo_refs.blockSignals(False)
+        self.lbl_pass_st.setText(f"✓ {len(caps)} capítulos.")
+        if caps: self._carregar_passagem()
+
     def _on_refs_erro(self, e):
         self.combo_refs.clear(); self.lbl_pass_st.setText(f"⚠ {e}")
+
+    # ── carregar passagem ─────────────────────────────────────────────────────
 
     def _carregar_passagem(self):
         fonte = self._fonte()
@@ -763,11 +1077,40 @@ class BuscaOnlineWidget(QWidget):
             self.texto_passagem.setPlainText("⏳ Carregando…")
             t = SefariaThread("pass", ref); t.passagem.connect(self._on_sef_pass)
             t.erro.connect(self._on_pass_erro); self._pass_thr = t; t.start()
+
         elif fonte == "perseus":
             urn = self.combo_refs.currentData() or self._edicao_urn
             if not urn: return
             self.texto_passagem.setPlainText("⏳ Carregando…")
             t = PercPassThread(urn); t.pronto.connect(self._on_perc_pass)
+            t.erro.connect(self._on_pass_erro); self._pass_thr = t; t.start()
+
+        elif fonte == "latinlib":
+            item = self.combo_refs.currentData()
+            if item is None:
+                item = self._ll_item
+            if not item: return
+            self.texto_passagem.setPlainText("⏳ Carregando…")
+            t = LatinLibTextThread(item)
+            t.pronto.connect(self._on_ll_texto)
+            t.erro.connect(self._on_pass_erro); self._pass_thr = t; t.start()
+
+        elif fonte == "phi":
+            aid = self._phi_autor_id
+            oid = self._phi_obra_id
+            if not aid or not oid: return
+            self.texto_passagem.setPlainText("⏳ Carregando via Diogenes…")
+            t = PhiTextThread(aid, oid)
+            t.pronto.connect(self._on_perc_pass)  # mesmo handler (texto puro)
+            t.erro.connect(self._on_pass_erro); self._pass_thr = t; t.start()
+
+        elif fonte == "apibible":
+            pid = self.combo_refs.currentData()
+            bid = self._abiblia_id or self.combo_biblia.currentData() or ""
+            if not pid or not bid: return
+            self.texto_passagem.setPlainText("⏳ Carregando…")
+            t = ApibiblePassThread(bid, pid)
+            t.pronto.connect(self._on_ab_pass)
             t.erro.connect(self._on_pass_erro); self._pass_thr = t; t.start()
 
     def _on_perc_pass(self, texto):
@@ -784,6 +1127,23 @@ class BuscaOnlineWidget(QWidget):
         self._set_botoes_passagem(bool(texto.strip()))
         self.btn_alpheios.setEnabled(False)
         self.lbl_pass_st.setText(f"✓ {len(texto.split())} palavras.")
+
+    def _on_ll_texto(self, texto):
+        self.texto_passagem.setPlainText(texto)
+        self._ultimo_texto = texto
+        self._set_botoes_passagem(bool(texto.strip()))
+        lingua = self._lingua_perc()
+        self.btn_alpheios.setEnabled(lingua in ("la", "lat"))
+        self.lbl_pass_st.setText(f"✓ {len(texto.split())} palavras.")
+
+    def _on_ab_pass(self, d):
+        texto = d.get("texto","")
+        self.texto_passagem.setPlainText(texto)
+        self._ultimo_texto = texto
+        self._set_botoes_passagem(bool(texto.strip()))
+        self.btn_alpheios.setEnabled(False)
+        ref = d.get("ref","")
+        self.lbl_pass_st.setText(f"✓ {ref} — {len(texto.split())} palavras.")
 
     def _on_pass_erro(self, e):
         self.texto_passagem.setPlainText(f"⚠ Erro: {e}")
