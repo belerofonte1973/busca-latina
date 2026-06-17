@@ -119,6 +119,25 @@ except ImportError:
         ("gemini-2.0-flash", "Flash 2.0 — rápido, gratuito"),
     ]
 
+try:
+    from claude_lat import (traduzir_stream as _claude_traduzir_stream,
+                             MODELOS_CLAUDE as _MODELOS_CLAUDE)
+    _CLAUDE_OK = True
+except ImportError:
+    _CLAUDE_OK = False
+    _MODELOS_CLAUDE = [
+        ("claude-haiku-4-5",  "Haiku 4.5  — rápido, económico"),
+        ("claude-sonnet-4-6", "Sonnet 4.6 — melhor qualidade"),
+    ]
+    def _claude_traduzir_stream(t, l, m, k): return iter(["[claude_lat não disponível]"])
+
+try:
+    import traduzir_lat_grc as _trad
+    _TRAD_OK = True
+except ImportError:
+    _TRAD_OK = False
+    _trad = None
+
 # ── chave Gemini (armazenada no settings.json do Classicus) ──────────────────
 
 def _gemini_obter_chave() -> str:
@@ -138,6 +157,26 @@ def _gemini_salvar_chave(chave: str) -> None:
     except Exception:
         s = {}
     s["gemini_api_key"] = chave.strip()
+    SETTINGS_FILE.write_text(
+        json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def _claude_obter_chave() -> str | None:
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return s.get("claude_api_key", "").strip() or None
+    except Exception:
+        return None
+
+def _claude_guardar_chave(chave: str) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        s = {}
+    s["claude_api_key"] = chave.strip()
     SETTINGS_FILE.write_text(
         json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -673,6 +712,65 @@ class GeminiThread(QThread):
             self.done.emit()
         except Exception as e:
             self.erro.emit(str(e))
+
+
+class ClaudeThread(QThread):
+    chunk  = pyqtSignal(str)
+    done   = pyqtSignal()
+    erro   = pyqtSignal(str)
+
+    def __init__(self, texto: str, lingua: str, modelo: str, api_key: str):
+        super().__init__()
+        self._texto   = texto
+        self._lingua  = lingua
+        self._modelo  = modelo
+        self._api_key = api_key
+        self._stop    = False
+
+    def stop(self): self._stop = True
+
+    def run(self):
+        try:
+            for frag in _claude_traduzir_stream(
+                    self._texto, self._lingua, self._modelo, self._api_key):
+                if self._stop:
+                    break
+                self.chunk.emit(frag)
+            self.done.emit()
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class InterlinearThread(QThread):
+    pronto = pyqtSignal(list)   # lista de {'palavra': str, 'glosa': str}
+    erro   = pyqtSignal(str)
+
+    def __init__(self, texto: str, lingua: str):
+        super().__init__()
+        self._texto  = texto
+        self._lingua = lingua
+
+    def run(self):
+        if not _TRAD_OK:
+            self.erro.emit("traduzir_lat_grc não disponível"); return
+        tokens = re.findall(r"[\wͰ-Ͽἀ-῿א-ת]+|[^\w\s]", self._texto)
+        linhas = []
+        for tok in tokens:
+            if not tok.isalpha():
+                linhas.append({"palavra": tok, "glosa": ""})
+                continue
+            glosa = ""
+            try:
+                if self._lingua == "la":
+                    glosa = _trad.lookup_collatinus_pt(tok) or ""
+                    if not glosa or glosa.startswith("(não encontrado)"):
+                        glosa = (_trad.lookup_ls(tok, traduzir_pt=False) or "")[:120]
+                elif self._lingua == "grc":
+                    glosa = (_trad.lookup_lsj(tok, traduzir_pt=False) or "")[:120]
+            except Exception:
+                pass
+            linhas.append({"palavra": tok, "glosa": glosa.strip()})
+        self.pronto.emit(linhas)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1543,6 +1641,8 @@ class TraducaoWidget(QWidget):
         self._tm            = tm
         self._ollama_thr         = None
         self._gemini_thr         = None
+        self._claude_thr         = None
+        self._interlinear_thr    = None
         self._ultimo_modelo_trad = MODELO_PADRAO
         self._tm_timer           = QTimer(self)
         self._tm_timer.setSingleShot(True)
@@ -1612,6 +1712,32 @@ class TraducaoWidget(QWidget):
         self.btn_gemini_chave.clicked.connect(self._on_gemini_chave)
         bar2.addWidget(self.btn_gemini_chave)
         bar2.addStretch(); root.addLayout(bar2)
+
+        # ── barra Claude ──────────────────────────────────────────────────────
+        bar3 = QHBoxLayout(); bar3.setSpacing(6)
+        self.btn_claude = QPushButton("🔷 Claude →PT-BR")
+        self.btn_claude.setToolTip("Traduzir via API Claude / Anthropic (online)")
+        self.btn_claude.clicked.connect(self._on_claude_traduzir)
+        bar3.addWidget(self.btn_claude)
+
+        self.combo_claude_modelo = QComboBox()
+        self.combo_claude_modelo.setMinimumWidth(220)
+        for mid, mlbl in _MODELOS_CLAUDE:
+            self.combo_claude_modelo.addItem(f"{mid}  [{mlbl}]", mid)
+        bar3.addWidget(self.combo_claude_modelo)
+
+        self.btn_claude_chave = QPushButton("🔑 Chave")
+        self.btn_claude_chave.setToolTip("Configurar chave da API Claude (Anthropic ou OpenRouter)")
+        self.btn_claude_chave.clicked.connect(self._on_claude_chave)
+        bar3.addWidget(self.btn_claude_chave)
+
+        bar3.addWidget(_sep_v())
+        self.btn_interlinear = QPushButton("📖 Interlinear (offline)")
+        self.btn_interlinear.setToolTip("Tradução palavra-a-palavra via dicionários locais (Collatinus/LS/LSJ)")
+        self.btn_interlinear.setEnabled(_TRAD_OK)
+        self.btn_interlinear.clicked.connect(self._on_interlinear)
+        bar3.addWidget(self.btn_interlinear)
+        bar3.addStretch(); root.addLayout(bar3)
 
         # ── área principal ────────────────────────────────────────────────────
         vsplit = QSplitter(Qt.Orientation.Vertical)
@@ -1736,6 +1862,72 @@ class TraducaoWidget(QWidget):
             _gemini_salvar_chave(nova.strip())
             self._status_cb("✓ Chave Gemini guardada.")
 
+    def _on_claude_traduzir(self):
+        txt = self.texto_src.toPlainText().strip()
+        if not txt:
+            self.texto_tgt.setPlainText("⚠ Sem texto para traduzir."); return
+        key = _claude_obter_chave()
+        if not key:
+            QMessageBox.warning(
+                self, "Chave Claude",
+                "Chave da API Claude não configurada.\n"
+                "Clique em 🔑 Chave para inserir a chave.\n"
+                "Obtenha em console.anthropic.com (pago)\n"
+                "ou use uma chave OpenRouter (sk-or-…) de openrouter.ai")
+            return
+        self._parar()
+        lingua = self._lingua()
+        modelo = self.combo_claude_modelo.currentData() or "claude-haiku-4-5"
+        self._ultimo_modelo_trad = modelo
+        self.texto_tgt.setPlainText(f"⏳ Traduzindo com Claude {modelo}…\n")
+        self._status_cb(f"Claude traduzindo ({modelo})…")
+        self._claude_thr = ClaudeThread(txt, lingua, modelo, key)
+        self._claude_thr.chunk.connect(self._append_tgt)
+        self._claude_thr.done.connect(lambda: self._status_cb("✓ Tradução Claude concluída."))
+        self._claude_thr.erro.connect(lambda e: (
+            self.texto_tgt.appendPlainText(f"\n⚠ Erro Claude: {e}"),
+            self._status_cb(f"⚠ Claude: {e}")))
+        self._claude_thr.start()
+
+    def _on_claude_chave(self):
+        atual = _claude_obter_chave() or ""
+        nova, ok = QInputDialog.getText(
+            self, "Chave API Claude",
+            "Cole aqui a chave da API Claude:\n"
+            "• Anthropic: sk-ant-… (console.anthropic.com)\n"
+            "• OpenRouter: sk-or-… (openrouter.ai/keys)",
+            text=atual)
+        if ok and nova.strip():
+            _claude_guardar_chave(nova.strip())
+            self._status_cb("✓ Chave Claude guardada.")
+
+    def _on_interlinear(self):
+        txt = self.texto_src.toPlainText().strip()
+        if not txt:
+            self.texto_tgt.setPlainText("⚠ Sem texto para traduzir."); return
+        lingua = self._lingua()
+        if lingua == "hbo":
+            self.texto_tgt.setPlainText("⚠ Tradução interlinear não disponível para Hebraico."); return
+        self.texto_tgt.setPlainText("⏳ Consultando dicionários…")
+        self._status_cb("Interlinear: a consultar dicionários…")
+        self._interlinear_thr = InterlinearThread(txt, lingua)
+        self._interlinear_thr.pronto.connect(self._on_interlinear_pronto)
+        self._interlinear_thr.erro.connect(lambda e: (
+            self.texto_tgt.setPlainText(f"⚠ Erro: {e}"),
+            self._status_cb(f"⚠ {e}")))
+        self._interlinear_thr.start()
+
+    def _on_interlinear_pronto(self, linhas: list):
+        linhas_fmt = []
+        for item in linhas:
+            p, g = item["palavra"], item["glosa"]
+            if g:
+                linhas_fmt.append(f"{p}\n  [{g}]")
+            else:
+                linhas_fmt.append(p)
+        self.texto_tgt.setPlainText("\n".join(linhas_fmt))
+        self._status_cb(f"✓ Interlinear: {len(linhas)} tokens.")
+
     def _append_tgt(self, frag):
         cur = self.texto_tgt.textCursor()
         cur.movePosition(QTextCursor.MoveOperation.End)
@@ -1747,6 +1939,8 @@ class TraducaoWidget(QWidget):
             self._ollama_thr.stop()
         if self._gemini_thr and self._gemini_thr.isRunning():
             self._gemini_thr.stop()
+        if self._claude_thr and self._claude_thr.isRunning():
+            self._claude_thr.stop()
         self._status_cb("Interrompido.")
 
     # ── memória de tradução ───────────────────────────────────────────────────
