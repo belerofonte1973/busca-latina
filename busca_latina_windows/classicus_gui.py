@@ -28,8 +28,8 @@ _SERIF = "Georgia"  if sys.platform == "win32" else "serif"
 
 MODELO_PADRAO   = "qwen2.5:14b"
 OLLAMA_URL      = "http://localhost:11434"
-OLLAMA_NUM_CTX  = 4096
-OLLAMA_KEEP_ALV = "10m"
+OLLAMA_NUM_CTX  = 2048
+OLLAMA_KEEP_ALV = "5m"
 
 # ── PyQt6 ─────────────────────────────────────────────────────────────────────
 
@@ -327,6 +327,17 @@ def _ollama_stream(prompt: str, modelo: str | None) -> Iterator[str]:
     except Exception as e:
         yield f"\n[Erro: {e}]"
 
+def _ollama_descarregar(modelo: str) -> None:
+    if not _REQUESTS_OK or not modelo: return
+    try:
+        _req.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": modelo, "keep_alive": "0"},
+            timeout=(5, 10),
+        )
+    except Exception:
+        pass
+
 def _ollama_precarregar(modelo: str) -> bool:
     if not _REQUESTS_OK: return False
     try:
@@ -381,11 +392,14 @@ class PrecarregarThread(QThread):
     pronto = pyqtSignal(str)
     falhou = pyqtSignal(str)
 
-    def __init__(self, modelo: str):
+    def __init__(self, modelo: str, modelo_anterior: str = ""):
         super().__init__()
-        self._modelo = modelo
+        self._modelo    = modelo
+        self._anterior  = modelo_anterior
 
     def run(self):
+        if self._anterior and self._anterior != self._modelo:
+            _ollama_descarregar(self._anterior)
         ok = _ollama_precarregar(self._modelo)
         if ok: self.pronto.emit(self._modelo)
         else:  self.falhou.emit(self._modelo)
@@ -2472,9 +2486,12 @@ class Classicus(QMainWindow):
             self._precarregar_modelo(modelo)
 
     def _precarregar_modelo(self, modelo: str):
-        if self._precarregar_thr and self._precarregar_thr.isRunning(): return
+        if self._precarregar_thr and self._precarregar_thr.isRunning():
+            self._precarregar_thr.wait(2000)
+        anterior = getattr(self, "_modelo_atual", MODELO_PADRAO)
+        self._modelo_atual = modelo
         self.lbl_ollama_st.setText(f"⏳ Carregando {modelo}…")
-        self._precarregar_thr = PrecarregarThread(modelo)
+        self._precarregar_thr = PrecarregarThread(modelo, anterior)
         self._precarregar_thr.pronto.connect(
             lambda m: self.lbl_ollama_st.setText(f"✓ Modelo pronto: {m}"))
         self._precarregar_thr.falhou.connect(
@@ -2516,17 +2533,17 @@ class Classicus(QMainWindow):
         for attr in ("_listar_thr", "_precarregar_thr"):
             thr = getattr(self, attr, None)
             if thr and thr.isRunning():
-                thr.terminate(); thr.wait(800)
+                thr.terminate(); thr.wait(2000)
         for w in (self.w_morfo, self.w_trad, self.w_busca):
             thr = getattr(w, "_ollama_thr", None) or getattr(w, "_cat_thr", None)
             if thr and thr.isRunning():
-                getattr(thr, "stop", thr.terminate)(); thr.wait(800)
+                getattr(thr, "stop", thr.terminate)(); thr.wait(2000)
             gem = getattr(w, "_gemini_thr", None)
             if gem and gem.isRunning():
-                gem.stop(); gem.wait(800)
+                gem.stop(); gem.wait(2000)
             pron = getattr(w, "_pron_thr", None)
             if pron and pron.isRunning():
-                pron.terminate(); pron.wait(800)
+                pron.terminate(); pron.wait(2000)
         pron = getattr(self.w_pron, "_pron_thr", None)
         if pron and pron.isRunning():
             pron.terminate(); pron.wait(800)

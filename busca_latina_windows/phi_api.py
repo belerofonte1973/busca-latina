@@ -221,6 +221,7 @@ def obter_catalogo_flat() -> list[dict]:
             items.append({
                 "display":    f"{a['autor']} — {o['titulo']}",
                 "autor":      a["autor"],
+                "obra":       o["titulo"],
                 "autor_id":   a["id"],
                 "obra_id":    o["id"],
                 "edicao_urn": f"phi:{a['id']}/{o['id']}",
