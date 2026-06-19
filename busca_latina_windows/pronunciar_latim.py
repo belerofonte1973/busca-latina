@@ -3,7 +3,7 @@
 pronunciar_latim.py — Pronúncia de latim e grego antigo
 Windows 11 ARM / Snapdragon X (ARM64)
 
-Motor principal : edge-tts (Python library, online, vozes neurais) + pygame
+Motor principal : edge-tts (Python library, online, vozes neurais) + playsound
 Motor offline   : espeak-ng (se instalado) ou pyttsx3 (SAPI Windows)
 
 Vozes sugeridas para latim
@@ -47,14 +47,11 @@ try:
 except ImportError:
     _EDGE_TTS_OK = False
 
-_PYGAME_OK           = False
-_pygame_initialized  = False
-
 try:
-    import pygame
-    _PYGAME_AVAILABLE = True
+    from playsound import playsound as _playsound
+    _PLAYSOUND_OK = True
 except ImportError:
-    _PYGAME_AVAILABLE = False
+    _PLAYSOUND_OK = False
 
 try:
     import pyttsx3
@@ -64,22 +61,6 @@ except ImportError:
 
 _ESPEAK           = shutil.which("espeak-ng") or shutil.which("espeak")
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
-
-
-def _init_pygame() -> bool:
-    global _PYGAME_OK, _pygame_initialized
-    if _pygame_initialized:
-        return _PYGAME_OK
-    _pygame_initialized = True
-    if not _PYGAME_AVAILABLE:
-        return False
-    try:
-        pygame.mixer.pre_init(44100, -16, 2, 512)
-        pygame.mixer.init()
-        _PYGAME_OK = True
-    except Exception:
-        _PYGAME_OK = False
-    return _PYGAME_OK
 
 
 # ── vozes disponíveis ─────────────────────────────────────────────────────────
@@ -175,11 +156,6 @@ def esta_a_falar() -> bool:
 def parar() -> None:
     global _play_thread, _tmp_mp3
     _stop_event.set()
-    if _init_pygame():
-        try:
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
     if _play_thread and _play_thread.is_alive():
         _play_thread.join(timeout=3)
     _play_thread = None
@@ -207,12 +183,11 @@ async def _edge_async(texto: str, voz: str, rate_str: str,
         if stop_evt.is_set():
             return
 
-        if _init_pygame():
-            pygame.mixer.music.load(tmp)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
+        if _PLAYSOUND_OK:
+            t = threading.Thread(target=_playsound, args=(tmp,), daemon=True)
+            t.start()
+            while t.is_alive():
                 if stop_evt.is_set():
-                    pygame.mixer.music.stop()
                     break
                 await asyncio.sleep(0.05)
         elif sys.platform == "win32":

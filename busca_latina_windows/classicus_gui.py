@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Classicus — busca, análise morfológica e tradução de textos clássicos
 Hebraico · Grego Antigo · Latim  →  Português Brasileiro
-Offline via Ollama (gemma4:26b)  ·  Windows 11 ARM, PyQt6
+Offline via Ollama (gemma3:4b)  ·  Windows 11 ARM, PyQt6
 """
 
 import json
@@ -26,7 +26,7 @@ TM_DB_FILE    = _cfg_dir / "memoria_traducao.db"
 _MONO  = "Consolas" if sys.platform == "win32" else "monospace"
 _SERIF = "Georgia"  if sys.platform == "win32" else "serif"
 
-MODELO_PADRAO   = "gemma4:26b"
+MODELO_PADRAO   = "gemma3:4b"
 OLLAMA_URL      = "http://localhost:11434"
 OLLAMA_NUM_CTX  = 4096
 OLLAMA_KEEP_ALV = "10m"
@@ -137,6 +137,13 @@ try:
 except ImportError:
     _TRAD_OK = False
     _trad = None
+
+try:
+    from nomes_pt import traduzir_catalogo as _traduzir_catalogo
+    _NOMES_PT_OK = True
+except ImportError:
+    _NOMES_PT_OK = False
+    def _traduzir_catalogo(cat): return cat
 
 # ── chave Gemini (armazenada no settings.json do Classicus) ──────────────────
 
@@ -1084,7 +1091,7 @@ class BuscaOnlineWidget(QWidget):
             self._cat_thr = t; t.start()
 
     def _on_cat_pronto(self, obras):
-        self._obras = obras; self._filtrar(self.filtro.text())
+        self._obras = _traduzir_catalogo(obras); self._filtrar(self.filtro.text())
         self.lbl_cat.setText(f"✓ {len(obras)} obras disponíveis.")
 
     def _on_cat_pronto_sef(self, obras):
@@ -1156,6 +1163,9 @@ class BuscaOnlineWidget(QWidget):
         if not item: return
         obra = item.data(Qt.ItemDataRole.UserRole)
         if not obra: return
+        # Bloquear sinais de thread anterior para evitar colisão entre autores
+        if hasattr(self, '_refs_thr') and self._refs_thr is not None:
+            self._refs_thr.blockSignals(True)
         self.combo_refs.clear(); self.combo_refs.addItem("(carregando…)","")
         self.lbl_pass_st.setText("Carregando…")
         fonte = self._fonte()

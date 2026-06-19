@@ -9,8 +9,8 @@ PyQt6>=6.6.0
 # edge-tts: Microsoft TTS neural via HTTP (não precisa de instalação local)
 edge-tts>=6.1.9
 
-# pygame: reprodução de MP3 gerado pelo edge-tts
-pygame>=2.5.0
+# playsound: reprodução de MP3 gerado pelo edge-tts (ARM64-compatible)
+playsound==1.2.2
 
 # pyttsx3: TTS offline via SAPI do Windows (fallback sem internet)
 pyttsx3>=2.90
