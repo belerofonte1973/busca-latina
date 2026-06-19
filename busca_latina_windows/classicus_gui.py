@@ -1067,6 +1067,9 @@ class BuscaOnlineWidget(QWidget):
     # ── carregar catálogo ─────────────────────────────────────────────────────
 
     def _carregar_catalogo(self, forcar=False):
+        if self._cat_thr and self._cat_thr.isRunning():
+            try: self._cat_thr.disconnect()
+            except Exception: pass
         fonte = self._fonte()
         self.lista_obras.clear(); self.combo_refs.clear()
         self.texto_passagem.clear(); self._obras = []
