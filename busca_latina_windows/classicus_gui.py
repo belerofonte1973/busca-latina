@@ -1953,6 +1953,8 @@ class TraducaoWidget(QWidget):
         self._status_cb(f"✓ Interlinear: {len(linhas)} tokens.")
 
     def _append_tgt(self, frag):
+        if self.texto_tgt.toPlainText().startswith("⏳"):
+            self.texto_tgt.clear()
         cur = self.texto_tgt.textCursor()
         cur.movePosition(QTextCursor.MoveOperation.End)
         self.texto_tgt.setTextCursor(cur)
