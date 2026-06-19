@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Classicus — busca, análise morfológica e tradução de textos clássicos
 Hebraico · Grego Antigo · Latim  →  Português Brasileiro
-Offline via Ollama (mistral-nemo)  ·  Windows 11 ARM, PyQt6
+Offline via Ollama (qwen2.5:14b)  ·  Windows 11 ARM, PyQt6
 """
 
 import json
@@ -26,7 +26,7 @@ TM_DB_FILE    = _cfg_dir / "memoria_traducao.db"
 _MONO  = "Consolas" if sys.platform == "win32" else "monospace"
 _SERIF = "Georgia"  if sys.platform == "win32" else "serif"
 
-MODELO_PADRAO   = "mistral-nemo"
+MODELO_PADRAO   = "qwen2.5:14b"
 OLLAMA_URL      = "http://localhost:11434"
 OLLAMA_NUM_CTX  = 4096
 OLLAMA_KEEP_ALV = "10m"
