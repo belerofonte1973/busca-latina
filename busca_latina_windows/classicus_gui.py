@@ -133,6 +133,22 @@ except ImportError:
     def _claude_traduzir_stream(t, l, m, k): return iter(["[claude_lat não disponível]"])
 
 try:
+    from deepl_lat import (traduzir_stream as _deepl_traduzir_stream)
+    _DEEPL_OK = True
+except ImportError:
+    _DEEPL_OK = False
+    def _deepl_traduzir_stream(t, l, m, k, **kw): return iter(["[deepl_lat não disponível]"])
+
+try:
+    from openai_lat import (traduzir_stream as _openai_traduzir_stream,
+                             MODELOS_OPENAI as _MODELOS_OPENAI)
+    _OPENAI_OK = True
+except ImportError:
+    _OPENAI_OK = False
+    _MODELOS_OPENAI = [("gpt-4o", "GPT-4o"), ("gpt-4o-mini", "GPT-4o mini")]
+    def _openai_traduzir_stream(t, l, m, k, **kw): return iter(["[openai_lat não disponível]"])
+
+try:
     import traduzir_lat_grc as _trad
     _TRAD_OK = True
 except ImportError:
@@ -177,6 +193,36 @@ def _claude_obter_chave() -> str | None:
         return s.get("claude_api_key", "").strip() or None
     except Exception:
         return None
+
+def _deepl_obter_chave() -> str:
+    key = os.environ.get("DEEPL_API_KEY", "").strip()
+    if key: return key
+    try:
+        s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return s.get("deepl_api_key", "").strip()
+    except Exception: return ""
+
+def _deepl_guardar_chave(chave: str) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try: s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception: s = {}
+    s["deepl_api_key"] = chave.strip()
+    SETTINGS_FILE.write_text(json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def _openai_obter_chave() -> str:
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if key: return key
+    try:
+        s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return s.get("openai_api_key", "").strip()
+    except Exception: return ""
+
+def _openai_guardar_chave(chave: str) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try: s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception: s = {}
+    s["openai_api_key"] = chave.strip()
+    SETTINGS_FILE.write_text(json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def _claude_guardar_chave(chave: str) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -408,6 +454,58 @@ class PrecarregarThread(QThread):
         ok = _ollama_precarregar(self._modelo)
         if ok: self.pronto.emit(self._modelo)
         else:  self.falhou.emit(self._modelo)
+
+
+class DeepLThread(QThread):
+    chunk  = pyqtSignal(str)
+    done   = pyqtSignal()
+    erro   = pyqtSignal(str)
+
+    def __init__(self, texto: str, lingua: str, api_key: str):
+        super().__init__()
+        self._texto   = texto
+        self._lingua  = lingua
+        self._api_key = api_key
+        self._stop    = False
+
+    def stop(self): self._stop = True
+
+    def run(self):
+        try:
+            for frag in _deepl_traduzir_stream(
+                    self._texto, self._lingua, "", self._api_key):
+                if self._stop: break
+                self.chunk.emit(frag)
+            self.done.emit()
+        except Exception as e:
+            self.erro.emit(str(e))
+
+
+class OpenAIThread(QThread):
+    chunk  = pyqtSignal(str)
+    done   = pyqtSignal()
+    erro   = pyqtSignal(str)
+
+    def __init__(self, texto: str, lingua: str, modelo: str, api_key: str):
+        super().__init__()
+        self._texto   = texto
+        self._lingua  = lingua
+        self._modelo  = modelo
+        self._api_key = api_key
+        self._stop    = False
+
+    def stop(self): self._stop = True
+
+    def run(self):
+        try:
+            for frag in _openai_traduzir_stream(
+                    self._texto, self._lingua, self._modelo, self._api_key,
+                    should_stop=lambda: self._stop):
+                if self._stop: break
+                self.chunk.emit(frag)
+            self.done.emit()
+        except Exception as e:
+            self.erro.emit(str(e))
 
 
 class AlpheiosMorphThread(QThread):
@@ -1674,6 +1772,8 @@ class TraducaoWidget(QWidget):
         self._ollama_thr         = None
         self._gemini_thr         = None
         self._claude_thr         = None
+        self._deepl_thr          = None
+        self._openai_thr         = None
         self._interlinear_thr    = None
         self._ultimo_modelo_trad = MODELO_PADRAO
         self._tm_timer           = QTimer(self)
@@ -1770,6 +1870,38 @@ class TraducaoWidget(QWidget):
         self.btn_interlinear.clicked.connect(self._on_interlinear)
         bar3.addWidget(self.btn_interlinear)
         bar3.addStretch(); root.addLayout(bar3)
+
+        # ── barra DeepL + OpenAI ──────────────────────────────────────────────
+        bar4 = QHBoxLayout(); bar4.setSpacing(6)
+
+        self.btn_deepl = QPushButton("🔵 DeepL →PT-BR")
+        self.btn_deepl.setToolTip("Traduzir via API DeepL (latim: suporte nativo; grego/hebraico: detecção automática)")
+        self.btn_deepl.clicked.connect(self._on_deepl_traduzir)
+        bar4.addWidget(self.btn_deepl)
+
+        self.btn_deepl_chave = QPushButton("🔑 Chave")
+        self.btn_deepl_chave.setToolTip("Configurar chave DeepL (deepl.com/pro-api — plano Free: 500k chars/mês)")
+        self.btn_deepl_chave.clicked.connect(self._on_deepl_chave)
+        bar4.addWidget(self.btn_deepl_chave)
+
+        bar4.addWidget(_sep_v())
+
+        self.btn_openai = QPushButton("🟢 OpenAI →PT-BR")
+        self.btn_openai.setToolTip("Traduzir via API OpenAI / GPT-4o (platform.openai.com/api-keys)")
+        self.btn_openai.clicked.connect(self._on_openai_traduzir)
+        bar4.addWidget(self.btn_openai)
+
+        self.combo_openai_modelo = QComboBox(); self.combo_openai_modelo.setMinimumWidth(200)
+        for mid, mlbl in _MODELOS_OPENAI:
+            self.combo_openai_modelo.addItem(f"{mid}  [{mlbl}]", mid)
+        bar4.addWidget(self.combo_openai_modelo)
+
+        self.btn_openai_chave = QPushButton("🔑 Chave")
+        self.btn_openai_chave.setToolTip("Configurar chave OpenAI (platform.openai.com/api-keys)")
+        self.btn_openai_chave.clicked.connect(self._on_openai_chave)
+        bar4.addWidget(self.btn_openai_chave)
+
+        bar4.addStretch(); root.addLayout(bar4)
 
         # ── área principal ────────────────────────────────────────────────────
         vsplit = QSplitter(Qt.Orientation.Vertical)
@@ -1968,6 +2100,79 @@ class TraducaoWidget(QWidget):
         self.texto_tgt.setTextCursor(cur)
         self.texto_tgt.insertPlainText(frag)
 
+    def _on_deepl_traduzir(self):
+        txt = self.texto_src.toPlainText().strip()
+        if not txt:
+            self.texto_tgt.setPlainText("⚠ Sem texto para traduzir."); return
+        key = _deepl_obter_chave()
+        if not key:
+            QMessageBox.warning(
+                self, "Chave DeepL",
+                "Chave DeepL não configurada.\n"
+                "Clique em 🔑 Chave para inserir.\n"
+                "Chave gratuita em deepl.com/pro-api (500 000 chars/mês).")
+            return
+        self._parar()
+        lingua = self._lingua()
+        self.texto_tgt.setPlainText("⏳ Traduzindo com DeepL…\n")
+        self._status_cb("DeepL traduzindo…")
+        self._deepl_thr = DeepLThread(txt, lingua, key)
+        self._deepl_thr.chunk.connect(self._append_tgt)
+        self._deepl_thr.done.connect(lambda: self._status_cb("✓ Tradução DeepL concluída."))
+        self._deepl_thr.erro.connect(lambda e: (
+            self.texto_tgt.appendPlainText(f"\n⚠ Erro DeepL: {e}"),
+            self._status_cb(f"⚠ DeepL: {e}")))
+        self._deepl_thr.start()
+
+    def _on_deepl_chave(self):
+        atual = _deepl_obter_chave()
+        nova, ok = QInputDialog.getText(
+            self, "Chave API DeepL",
+            "Cole aqui a chave da API DeepL:\n"
+            "Obtenha em deepl.com/pro-api (plano Free: 500k chars/mês).\n"
+            "Chaves Free terminam em ':fx'.",
+            text=atual)
+        if ok and nova.strip():
+            _deepl_guardar_chave(nova.strip())
+            self._status_cb("✓ Chave DeepL guardada.")
+
+    def _on_openai_traduzir(self):
+        txt = self.texto_src.toPlainText().strip()
+        if not txt:
+            self.texto_tgt.setPlainText("⚠ Sem texto para traduzir."); return
+        key = _openai_obter_chave()
+        if not key:
+            QMessageBox.warning(
+                self, "Chave OpenAI",
+                "Chave OpenAI não configurada.\n"
+                "Clique em 🔑 Chave para inserir.\n"
+                "Obtenha em platform.openai.com/api-keys.")
+            return
+        self._parar()
+        lingua = self._lingua()
+        modelo = self.combo_openai_modelo.currentData() or "gpt-4o"
+        self._ultimo_modelo_trad = modelo
+        self.texto_tgt.setPlainText(f"⏳ Traduzindo com {modelo}…\n")
+        self._status_cb(f"OpenAI traduzindo ({modelo})…")
+        self._openai_thr = OpenAIThread(txt, lingua, modelo, key)
+        self._openai_thr.chunk.connect(self._append_tgt)
+        self._openai_thr.done.connect(lambda: self._status_cb("✓ Tradução OpenAI concluída."))
+        self._openai_thr.erro.connect(lambda e: (
+            self.texto_tgt.appendPlainText(f"\n⚠ Erro OpenAI: {e}"),
+            self._status_cb(f"⚠ OpenAI: {e}")))
+        self._openai_thr.start()
+
+    def _on_openai_chave(self):
+        atual = _openai_obter_chave()
+        nova, ok = QInputDialog.getText(
+            self, "Chave API OpenAI",
+            "Cole aqui a chave da API OpenAI (sk-…):\n"
+            "Obtenha em platform.openai.com/api-keys.",
+            text=atual)
+        if ok and nova.strip():
+            _openai_guardar_chave(nova.strip())
+            self._status_cb("✓ Chave OpenAI guardada.")
+
     def _parar(self):
         if self._ollama_thr and self._ollama_thr.isRunning():
             self._ollama_thr.stop()
@@ -1975,6 +2180,10 @@ class TraducaoWidget(QWidget):
             self._gemini_thr.stop()
         if self._claude_thr and self._claude_thr.isRunning():
             self._claude_thr.stop()
+        if self._deepl_thr and self._deepl_thr.isRunning():
+            self._deepl_thr.stop()
+        if self._openai_thr and self._openai_thr.isRunning():
+            self._openai_thr.stop()
         self._status_cb("Interrompido.")
 
     # ── memória de tradução ───────────────────────────────────────────────────
@@ -2548,9 +2757,10 @@ class Classicus(QMainWindow):
             thr = getattr(w, "_ollama_thr", None) or getattr(w, "_cat_thr", None)
             if thr and thr.isRunning():
                 getattr(thr, "stop", thr.terminate)(); thr.wait(2000)
-            gem = getattr(w, "_gemini_thr", None)
-            if gem and gem.isRunning():
-                gem.stop(); gem.wait(2000)
+            for attr in ("_gemini_thr", "_claude_thr", "_deepl_thr", "_openai_thr"):
+                thr = getattr(w, attr, None)
+                if thr and thr.isRunning():
+                    thr.stop(); thr.wait(2000)
             pron = getattr(w, "_pron_thr", None)
             if pron and pron.isRunning():
                 pron.terminate(); pron.wait(2000)
