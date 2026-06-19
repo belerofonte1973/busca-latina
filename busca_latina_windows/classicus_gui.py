@@ -26,7 +26,7 @@ TM_DB_FILE    = _cfg_dir / "memoria_traducao.db"
 _MONO  = "Consolas" if sys.platform == "win32" else "monospace"
 _SERIF = "Georgia"  if sys.platform == "win32" else "serif"
 
-MODELO_PADRAO   = "mistral:latest"
+MODELO_PADRAO   = "qwen2.5:14b" if sys.platform == "win32" else "mistral:latest"
 OLLAMA_URL      = "http://localhost:11434"
 OLLAMA_NUM_CTX  = 2048
 OLLAMA_KEEP_ALV = "5m"
