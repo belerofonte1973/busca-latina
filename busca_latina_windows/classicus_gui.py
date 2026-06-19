@@ -29,7 +29,8 @@ _SERIF = "Georgia"  if sys.platform == "win32" else "serif"
 MODELO_PADRAO   = "qwen2.5:14b" if sys.platform == "win32" else "mistral:latest"
 OLLAMA_URL      = "http://localhost:11434"
 OLLAMA_NUM_CTX  = 2048
-OLLAMA_KEEP_ALV = "5m"
+OLLAMA_KEEP_ALV = "30m"
+OLLAMA_NUM_THR  = 8   # threads físicos disponíveis (i7-870 / Snapdragon X)
 
 # ── PyQt6 ─────────────────────────────────────────────────────────────────────
 
@@ -311,7 +312,9 @@ def _ollama_stream(prompt: str, modelo: str | None) -> Iterator[str]:
             f"{OLLAMA_URL}/api/generate",
             json={"model": modelo, "prompt": prompt, "stream": True,
                   "keep_alive": OLLAMA_KEEP_ALV,
-                  "options": {"num_ctx": OLLAMA_NUM_CTX}},
+                  "options": {"num_ctx": OLLAMA_NUM_CTX,
+                              "num_thread": OLLAMA_NUM_THR,
+                              "num_batch": 512}},
             stream=True, timeout=(12, None),
         )
         resp.raise_for_status()
@@ -344,7 +347,9 @@ def _ollama_precarregar(modelo: str) -> bool:
         r = _req.post(
             f"{OLLAMA_URL}/api/generate",
             json={"model": modelo, "keep_alive": OLLAMA_KEEP_ALV,
-                  "options": {"num_ctx": OLLAMA_NUM_CTX}},
+                  "options": {"num_ctx": OLLAMA_NUM_CTX,
+                              "num_thread": OLLAMA_NUM_THR,
+                              "num_batch": 512}},
             timeout=(10, 180),
         )
         return r.status_code == 200
@@ -1583,21 +1588,21 @@ class MorfologiaWidget(QWidget):
         if not txt.strip():
             self.analise_out.setPlainText("⚠ Nenhum texto para analisar."); return
         lingua = self._lingua()
-        self._iniciar_ollama(_prompt_morfo(lingua, txt[:2000]), "Análise morfológica")
+        self._iniciar_ollama(_prompt_morfo(lingua, txt[:600]), "Análise morfológica")
 
     def _on_sint(self):
         txt = self._texto()
         if not txt.strip():
             self.analise_out.setPlainText("⚠ Nenhum texto para analisar."); return
         lingua = self._lingua()
-        self._iniciar_ollama(_prompt_sintatico(lingua, txt[:2000]), "Análise sintática")
+        self._iniciar_ollama(_prompt_sintatico(lingua, txt[:900]), "Análise sintática")
 
     def _on_coment(self):
         txt = self._texto()
         if not txt.strip():
             self.analise_out.setPlainText("⚠ Nenhum texto para analisar."); return
         lingua = self._lingua()
-        self._iniciar_ollama(_prompt_comentario(lingua, txt[:1500]), "Comentário filológico")
+        self._iniciar_ollama(_prompt_comentario(lingua, txt[:900]), "Comentário filológico")
 
     def _on_dblclick(self, event):
         QTextEdit.mouseDoubleClickEvent(self.texto_in, event)
