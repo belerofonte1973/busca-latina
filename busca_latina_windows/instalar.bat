@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ============================================================
-echo  Busca Latina — Instalacao para Windows 11 ARM
+echo  Classicus — Instalacao para Windows 11 ARM
 echo ============================================================
 echo.
 
@@ -26,7 +26,7 @@ echo     OK
 echo.
 
 :: Instalar dependencias principais
-echo [2/4] A instalar dependencias (PyQt6, edge-tts, pygame)...
+echo [2/4] A instalar dependencias (PyQt6, edge-tts, requests)...
 python -m pip install -r requirements.txt
 if errorlevel 1 (
     echo.
@@ -40,14 +40,13 @@ echo.
 echo [3/4] A verificar instalacao...
 python -c "import PyQt6; print('  PyQt6: OK -', PyQt6.QtCore.PYQT_VERSION_STR)"
 python -c "import edge_tts; print('  edge-tts: OK')"
-python -c "import pygame; print('  pygame: OK -', pygame.version.ver)"
 python -c "import requests; print('  requests: OK')"
 echo.
 
 :: Informacao sobre Ollama
-echo [4/4] Ollama (IA local — opcional):
+echo [4/4] Ollama (IA local — recomendado):
 echo   Instale em: https://ollama.com/download/windows
-echo   Depois execute: ollama pull llama3.2
+echo   Depois execute no terminal:  ollama pull qwen2.5:14b
 echo.
 
 :: Informacao sobre espeak-ng (IPA)
@@ -62,14 +61,15 @@ if errorlevel 1 (
     echo   Aviso: nao foi possivel criar o atalho automaticamente.
     echo   Execute manualmente: powershell -File criar_atalho.ps1
 ) else (
-    echo   Atalho "Busca Latina" criado no Ambiente de Trabalho.
+    echo   Atalho "Classicus" criado no Ambiente de Trabalho.
 )
 echo.
 
 echo ============================================================
 echo  Instalacao concluida!
-echo  Abra o Busca Latina pelo atalho no Ambiente de Trabalho
-echo  ou clique duas vezes em busca_latina.bat
+echo  Modelo padrao: qwen2.5:14b (via Ollama)
+echo  Abra o Classicus pelo atalho no Ambiente de Trabalho
+echo  ou clique duas vezes em Classicus.bat
 echo ============================================================
 echo.
 pause
